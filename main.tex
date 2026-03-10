@@ -1,0 +1,188 @@
+%%
+%% MICRO 2026 Paper: Model-Defined Remapper
+%% Based on the official MICRO 2026 LaTeX template (acmart sigconf)
+%%
+%TC:macro \cite [option:text,text]
+%TC:macro \citep [option:text,text]
+%TC:macro \citet [option:text,text]
+%TC:envir table 0 1
+%TC:envir table* 0 1
+%TC:envir tabular [ignore] word
+%TC:envir displaymath 0 word
+%TC:envir math 0 word
+%TC:envir comment 0 0
+
+\documentclass[sigconf, screen, review]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+\setcopyright{none}
+\copyrightyear{2026}
+\acmYear{2026}
+\acmDOI{XXXXXXX.XXXXXXX}
+\acmConference[MICRO 2026]{The 59th IEEE/ACM International Symposium on Microarchitecture}{October 31--November 04, 2026}{Athens, Greece}
+\acmISBN{978-X-XXXX-XXXX-X/XX/XX}
+
+%%\acmSubmissionID{123-A56-BU3}
+
+\settopmatter{printfolios=true}
+\settopmatter{printacmref=false}
+
+\begin{document}
+
+%% ============================================================
+%% TITLE
+%% ============================================================
+\title{Model-Defined Remapper: Virtual-to-Physical Topology Mapping for Chiplet-Based Architectures}
+\subtitle{\normalsize{MICRO 2026 Submission
+    \textbf{\#NaN} -- Confidential Draft -- Do NOT Distribute!!}}
+
+%% ============================================================
+%% ABSTRACT
+%% ============================================================
+\begin{abstract}
+
+% TODO: Write abstract (~150-250 words)
+% Structure: (1) Problem context, (2) Key challenge, (3) Our approach/insight, (4) Key results
+
+\end{abstract}
+
+\keywords{topology mapping, chiplet, network-on-chip, virtualization, reconfigurable architecture}
+
+\maketitle
+
+%% ============================================================
+%% 1. INTRODUCTION (1.5-2 pages)
+%% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+% TODO: Paragraph 1 - Big picture motivation (chiplet era, heterogeneous integration)
+
+% TODO: Paragraph 2 - The problem (virtual-to-physical topology mapping gap)
+
+% TODO: Paragraph 3 - Why existing solutions fall short
+
+% TODO: Paragraph 4 - Key insight / our approach
+
+% TODO: Paragraph 5 - Contributions list
+% Our key contributions are as follows:
+% \begin{itemize}
+%   \item We identify and formalize the virtual-to-physical topology mapping problem for chiplet-based architectures.
+%   \item We propose \textit{Model-Defined Remapper}, a framework that ...
+%   \item We evaluate ... across ... topologies and ... workloads, demonstrating ...
+% \end{itemize}
+
+%% ============================================================
+%% 2. BACKGROUND & MOTIVATION (1-1.5 pages)
+%% ============================================================
+\section{Background and Motivation}
+\label{sec:background}
+
+\subsection{Chiplet-Based Architectures}
+\label{sec:bg-chiplet}
+% TODO: Background on chiplet integration, interposer networks, NoC topologies
+
+\subsection{Virtual vs. Physical Topology}
+\label{sec:bg-topology}
+% TODO: Define virtual topology (application/model view) vs. physical topology (hardware)
+
+\subsection{Motivating Example}
+\label{sec:motivation}
+% TODO: Concrete example showing performance gap between naive and optimized mapping
+% Include a motivating figure showing the problem
+
+%% ============================================================
+%% 3. DESIGN / ARCHITECTURE (3-4 pages)
+%% ============================================================
+\section{Model-Defined Remapper}
+\label{sec:design}
+
+\subsection{Overview}
+\label{sec:design-overview}
+% TODO: High-level architecture diagram and design philosophy
+% Figure: System overview of Model-Defined Remapper
+
+\subsection{Problem Formulation}
+\label{sec:formulation}
+% TODO: Formal definition of the mapping problem
+% Show NP-hardness or computational complexity argument
+
+\subsection{Mapping Algorithm}
+\label{sec:algorithm}
+% TODO: Core algorithm / heuristic for topology mapping
+
+\subsection{Hardware Support}
+\label{sec:hardware}
+% TODO: Any required hardware extensions or reconfiguration mechanisms
+
+%% ============================================================
+%% 4. IMPLEMENTATION (0.5-1 page)
+%% ============================================================
+\section{Implementation}
+\label{sec:implementation}
+
+% TODO: Simulation framework, tools used, RTL/cycle-accurate details
+% Describe how the remapper is implemented/integrated
+
+%% ============================================================
+%% 5. EVALUATION (2.5-3 pages)
+%% ============================================================
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Methodology}
+\label{sec:methodology}
+% TODO: Simulation setup, baselines, benchmarks/workloads, metrics
+% Table: Simulation configuration parameters
+
+\subsection{Performance Results}
+\label{sec:results-perf}
+% TODO: Latency, throughput comparisons vs. baselines
+% Figures: Performance comparison charts
+
+\subsection{Energy and Area Analysis}
+\label{sec:results-energy}
+% TODO: Energy consumption, area overhead analysis
+
+\subsection{Scalability}
+\label{sec:scalability}
+% TODO: Results across different topology sizes and configurations
+
+\subsection{Sensitivity Analysis}
+\label{sec:sensitivity}
+% TODO: How results change with key parameters
+
+%% ============================================================
+%% 6. RELATED WORK (0.5-1 page)
+%% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{NoC Topology Design}
+% TODO: Prior work on NoC topology design and optimization
+
+\subsection{Topology Mapping and Virtualization}
+% TODO: Prior work on application-to-topology mapping, NPU virtualization
+
+\subsection{Chiplet Integration}
+% TODO: Prior work on chiplet architectures and interposer design
+
+%% ============================================================
+%% 7. CONCLUSION (0.5 page)
+%% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+% TODO: Summary of contributions and key results
+% TODO: Future directions
+
+%% ============================================================
+%% REFERENCES
+%% ============================================================
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
