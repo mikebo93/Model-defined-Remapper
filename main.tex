@@ -35,140 +35,600 @@
 %% ============================================================
 %% TITLE
 %% ============================================================
-\title{Model-Defined Remapper: Virtual-to-Physical Topology Mapping for Chiplet-Based Architectures}
+\title{Model-Defined Remapper: Defect-Tolerant Virtual-to-Physical Topology Mapping with Deadlock-Free Routing for Large-Scale 2D Mesh Architectures}
 \subtitle{\normalsize{MICRO 2026 Submission
     \textbf{\#NaN} -- Confidential Draft -- Do NOT Distribute!!}}
 
 %% ============================================================
-%% ABSTRACT
+%% ABSTRACT (~200 words)
 %% ============================================================
 \begin{abstract}
 
-% TODO: Write abstract (~150-250 words)
-% Structure: (1) Problem context, (2) Key challenge, (3) Our approach/insight, (4) Key results
+% --- Sentence 1-2: Context & problem ---
+% Large-scale 2D mesh architectures (wafer-scale engines, chiplet interposers) are
+% increasingly adopted for AI and HPC workloads, yet manufacturing defects in cores,
+% routers, and links are inevitable at scale.
+%
+% --- Sentence 3-4: Limitation of existing approaches ---
+% Current defect mitigation relies on either hardware redundancy (spare cores/routers)
+% that wastes die area, or software discard of irregular regions that underutilizes
+% healthy resources. Both approaches expose only a regular sub-topology to software,
+% leaving routing resources (e.g., diagonal links) unused.
+%
+% --- Sentence 5-6: Our approach ---
+% We propose Model-Defined Remapper, a framework that decouples the virtual topology
+% seen by applications from the defective physical topology. Our approach uses a
+% hierarchical spatial search heuristic to map a virtual regular mesh onto all healthy
+% nodes of a larger faulty physical mesh, paired with a submesh-hierarchy routing
+% scheme that guarantees deadlock-free packet delivery on the resulting irregular topology.
+%
+% --- Sentence 7-8: Key results ---
+% We evaluate on meshes up to 512x512 with realistic fault rates (7\% PE, 3.5\% router,
+% 0.7\% link), demonstrating that Model-Defined Remapper achieves [X\%] higher hardware
+% utilization than discard-based approaches while maintaining [Y\%] of healthy-mesh
+% performance for GEMM and GEMV workloads. We further show that mesh-to-diagonal-mesh
+% remapping exploits unused routing resources, reducing average hop distance by [Z\%].
 
 \end{abstract}
 
-\keywords{topology mapping, chiplet, network-on-chip, virtualization, reconfigurable architecture}
+\keywords{topology mapping, defect tolerance, network-on-chip, deadlock-free routing, wafer-scale, chiplet}
 
 \maketitle
 
 %% ============================================================
-%% 1. INTRODUCTION (1.5-2 pages)
+%% 1. INTRODUCTION (1.5--2 pages)
 %% ============================================================
 \section{Introduction}
 \label{sec:intro}
 
-% TODO: Paragraph 1 - Big picture motivation (chiplet era, heterogeneous integration)
+% --- P1: Big picture --- (4-5 sentences)
+% The era of large-scale 2D mesh architectures.
+% Wafer-scale engines (Cerebras WSE: 850K+ cores), chiplet interposers (AMD MI300),
+% and many-core accelerators use 2D mesh/torus as their interconnect topology.
+% These architectures are critical for AI training, inference, and HPC workloads
+% that demand massive parallelism with structured communication (systolic arrays,
+% broadcast-reduce patterns).
+% Cite: \cite{lie2019wse, lie2024cerebras, xue2024npu}
 
-% TODO: Paragraph 2 - The problem (virtual-to-physical topology mapping gap)
+% --- P2: The defect problem --- (4-5 sentences)
+% At wafer scale, defects are inevitable: PU failures, router faults, link opens/shorts.
+% As feature sizes shrink and die areas grow, defect density becomes a first-order concern.
+% Cerebras reports ~1% spare cores to compensate \cite{lie2024cerebras}.
+% The fundamental tension: applications require regular topologies for structured
+% computation (GEMM, GEMV), but physical hardware is irregular due to defects.
 
-% TODO: Paragraph 3 - Why existing solutions fall short
+% --- P3: Existing approaches and their limitations --- (5-6 sentences)
+% Two dominant strategies exist:
+% (1) Hardware redundancy: spare cores/routers swap in for defective ones, presenting
+%     a regular topology to software (Cerebras WSE, AMD MI300).
+%     Limitation: wastes die area on spares; extra routing resources (diagonal links)
+%     go unused when only regular mesh is exposed.
+% (2) Software discard: find largest defect-free regular sub-mesh, use only that.
+%     Limitation: abandons usable-but-irregular regions, low utilization at higher
+%     defect rates.
+% Neither approach is workload-aware or scales gracefully with defect rate.
+% Cite: \cite{zhang2009topology, zhang2010virtualization, cerebras2025sigops}
 
-% TODO: Paragraph 4 - Key insight / our approach
+% --- P4: Our key insight --- (3-4 sentences)
+% Insight: we can decouple the virtual topology (what the application programs against)
+% from the physical topology (the actual defective hardware).
+% Rather than forcing physical regularity, we map a virtual regular mesh onto ALL
+% available healthy nodes in a larger faulty physical mesh, with a cost model that
+% is aware of the application's communication patterns (GEMM, GEMV).
+% The mapping is transparent: applications are unchanged.
 
-% TODO: Paragraph 5 - Contributions list
-% Our key contributions are as follows:
-% \begin{itemize}
-%   \item We identify and formalize the virtual-to-physical topology mapping problem for chiplet-based architectures.
-%   \item We propose \textit{Model-Defined Remapper}, a framework that ...
-%   \item We evaluate ... across ... topologies and ... workloads, demonstrating ...
-% \end{itemize}
+% --- P5: Challenges --- (3-4 sentences)
+% This approach raises three challenges:
+% (C1) The virtual-to-physical embedding problem is NP-hard (generalizes subgraph
+%      isomorphism with cost minimization), requiring scalable heuristics.
+% (C2) Routing on the resulting irregular physical topology must be deadlock-free,
+%      which is non-trivial when faults break the regular structure that standard
+%      dimension-order routing relies on.
+% (C3) The remapper must scale to large meshes (512x512+) with practical runtime.
+% Cite: \cite{rost2020hardness, zhang2009topology}
+
+% --- P6: Our approach --- (3-4 sentences)
+% We propose Model-Defined Remapper, which addresses all three challenges:
+% A hierarchical spatial search (recursive coordinate bisection + KdTree-indexed
+% super nodes) enables scalable mapping with workflow-aware cost optimization.
+% A submesh-hierarchy routing scheme (ascend-then-descend, no re-ascent) guarantees
+% deadlock-free delivery on arbitrarily irregular topologies.
+% We further demonstrate that remapping a virtual 4-connected mesh onto a physical
+% 8-connected (diagonal) mesh exploits otherwise-unused routing resources.
+
+% --- P7: Contributions --- (bulleted list)
+% We make the following contributions:
+\begin{itemize}
+  \item We formalize the defect-tolerant virtual-to-physical topology remapping
+        problem for large-scale 2D mesh architectures and show it is NP-hard.
+  \item We propose a hierarchical, workflow-aware mapping heuristic that scales to
+        512$\times$512 meshes, using KdTree-indexed spatial search with parallel
+        candidate evaluation.
+  \item We design a submesh-hierarchy routing scheme that guarantees deadlock-free
+        packet delivery on arbitrarily defective topologies, for both 4-connected
+        and 8-connected meshes.
+  \item We demonstrate that mesh-to-diagonal-mesh remapping exploits unused routing
+        resources (e.g., diagonal links in Cerebras-style fabrics), reducing hop
+        distance and congestion.
+  \item We evaluate across mesh sizes up to 512$\times$512, multiple fault rates, and
+        GEMM/GEMV workloads, showing [X\%] utilization improvement over discard-based
+        approaches with [Y\%] of healthy-mesh performance.
+\end{itemize}
 
 %% ============================================================
-%% 2. BACKGROUND & MOTIVATION (1-1.5 pages)
+%% 2. BACKGROUND AND MOTIVATION (1--1.5 pages)
 %% ============================================================
 \section{Background and Motivation}
 \label{sec:background}
 
-\subsection{Chiplet-Based Architectures}
-\label{sec:bg-chiplet}
-% TODO: Background on chiplet integration, interposer networks, NoC topologies
+% ---------- 2.1 ----------
+\subsection{Large-Scale 2D Mesh Architectures}
+\label{sec:bg-arch}
 
-\subsection{Virtual vs. Physical Topology}
-\label{sec:bg-topology}
-% TODO: Define virtual topology (application/model view) vs. physical topology (hardware)
+% --- P1: Why 2D mesh dominates --- (4-5 sentences)
+% 2D mesh is the dominant on-chip topology for large-scale architectures because:
+% (1) Manufacturing-friendly: planar layout maps directly to silicon/interposer substrate.
+% (2) Scalable: O(N) links, constant router radix.
+% (3) Enables structured computation: systolic arrays (GEMM), broadcast-reduce (GEMV).
+% Examples: Cerebras WSE (2D mesh, 850K cores), Google TPU (2D torus),
+%           Intel Ponte Vecchio (mesh of Xe cores).
 
-\subsection{Motivating Example}
-\label{sec:motivation}
-% TODO: Concrete example showing performance gap between naive and optimized mapping
-% Include a motivating figure showing the problem
+% --- P2: Why not other topologies --- (3-4 sentences)
+% Clos/fat-tree: easier defect tolerance (stage-level swap), but multi-stage switching
+% doesn't map to 2D silicon layout; suited for switches/routers, not on-chip.
+% Fully-connected: trivial routing but O(N^2) links, unaffordable at scale.
+% 2D mesh/torus is the practical choice for 100+ core chips.
+% Cite: \cite{lie2019wse, yin2023modular}
+
+% ---------- 2.2 ----------
+\subsection{Defects and Current Mitigation}
+\label{sec:bg-defect}
+
+% --- P1: Defect types --- (3-4 sentences)
+% Three types of permanent manufacturing defects in 2D mesh architectures:
+% (1) Processing Element (PE/core) faults: stuck-at, logic errors.
+% (2) Router faults: crossbar or buffer failures.
+% (3) Link faults: open/short circuits in inter-router wires.
+% At wafer scale, defect rates of 1-10% per component type are realistic.
+
+% --- P2: Hardware redundancy approach --- (4-5 sentences)
+% Approach 1: Design with spare cores, routers, and links.
+% Cerebras WSE: ~1% spare cores, redundant fabric links; distributed autonomous
+% repair logic restores a regular 2D mesh topology.
+% AMD MI300: redundant XCDs (chiplet-level redundancy).
+% Key limitation: spares consume die area/power; diagonal links in physical fabric
+% are unused when only regular 4-connected mesh is exposed to software.
+% Cite: \cite{lie2024cerebras, cerebras2025sigops}
+
+% --- P3: Software discard approach --- (3-4 sentences)
+% Approach 2: Identify largest defect-free rectangular sub-mesh; use only that.
+% Simple but wasteful: all healthy nodes outside the sub-mesh are abandoned.
+% Utilization degrades rapidly with defect rate.
+% Prior work: Zhang et al. proved topology reconfiguration is NP-complete \cite{zhang2009topology}.
+
+% ---------- 2.3 ----------
+\subsection{The Utilization Gap}
+\label{sec:bg-gap}
+
+% --- Motivating data/figure --- (4-5 sentences + figure)
+% [FIGURE 1: Motivating example]
+% Left: 12x12 physical mesh with 7% PE faults, 3.5% router faults.
+% Middle: Largest regular sub-mesh (discard approach) — show wasted healthy nodes.
+% Right: Our remapping — virtual 8x8 mesh mapped onto all healthy nodes.
+% Quantify: discard wastes X% of healthy resources; our approach uses Y%.
+%
+% Key observation: even with Cerebras-style diagonal links in the physical fabric,
+% the discard/redundancy approach only exposes a 4-connected regular mesh,
+% leaving diagonal routing resources unused.
+
+% ---------- 2.4 ----------
+\subsection{Regularity Requirements for Structured Computation}
+\label{sec:bg-regularity}
+
+% --- P1: Why applications need regular topology --- (4-5 sentences)
+% Structured kernels (GEMM, GEMV, convolution, FFT) rely on regular communication patterns:
+% Systolic GEMM: data flows along rows and columns in lockstep.
+% GEMV: broadcast input vector along rows, reduce partial sums along columns.
+% These patterns assume uniform neighbor connectivity and predictable hop latency
+% that dimension-order routing on a regular mesh provides.
+% Irregular topology breaks these assumptions: non-uniform hop counts cause
+% synchronization overhead and load imbalance.
+
+% --- P2: Our insight --- (2-3 sentences)
+% Key insight: the application only needs to *see* a regular topology.
+% If we can transparently remap the virtual regular mesh to the physical irregular mesh
+% while preserving communication semantics, applications need not change.
+% The cost is non-uniform physical hop distances, which our cost model minimizes.
 
 %% ============================================================
-%% 3. DESIGN / ARCHITECTURE (3-4 pages)
+%% 3. MODEL-DEFINED REMAPPER (3--4 pages)
 %% ============================================================
 \section{Model-Defined Remapper}
 \label{sec:design}
 
+% ---------- 3.1 ----------
 \subsection{Overview}
 \label{sec:design-overview}
-% TODO: High-level architecture diagram and design philosophy
-% Figure: System overview of Model-Defined Remapper
 
+% [FIGURE 2: System overview / pipeline diagram]
+% Input:  Virtual mesh spec (W x H) + Physical mesh with fault map + Workload (GEMM/GEMV)
+% Stage 1: Fault-aware partitioning (RCB -> submeshes -> super nodes)
+% Stage 2: Hierarchical mapping (anchor init -> frontier expansion -> cost evaluation)
+% Stage 3: Routing construction (submesh-hierarchy paths -> routing database)
+% Output: Coordinate map (v_coord -> p_coord) + Deadlock-free routing tables
+
+% --- P1: Design philosophy --- (3-4 sentences)
+% Model-Defined Remapper takes a "virtual topology first" approach:
+% the application defines its desired regular mesh; the remapper finds the best
+% physical embedding. The mapping is one-time (post-manufacturing / boot-time),
+% not runtime. The framework is topology-parametric: supports both 4-connected
+% and 8-connected physical meshes via pluggable distance metrics and routers.
+
+% ---------- 3.2 ----------
 \subsection{Problem Formulation}
 \label{sec:formulation}
-% TODO: Formal definition of the mapping problem
-% Show NP-hardness or computational complexity argument
 
-\subsection{Mapping Algorithm}
+% --- P1: Formal definition --- (5-6 sentences + math)
+% Given:
+%   - Virtual mesh G_v = (V_v, E_v): W x H regular 2D mesh
+%   - Physical mesh G_p = (V_p, E_p): W' x H' mesh with faulty nodes/edges removed
+%     (W' > W, H' > H to accommodate faults)
+%   - Workload W: set of data flows (unicast, multicast, reduce, alltoall)
+% Find: injection f: V_v -> V_p such that:
+%   (1) f is injective (one-to-one)
+%   (2) For every virtual edge (u,v) in E_v, there exists a physical path from f(u) to f(v) in G_p
+%   (3) Cost(f, W) is minimized, where Cost accounts for:
+%       - Hop stretch: physical distance vs. virtual distance for each mapped edge
+%       - Congestion: link utilization based on workload data flows
+%       - Workflow cost: weighted by communication intensity
+
+% --- P2: Complexity --- (3-4 sentences)
+% Theorem: The mapping problem is NP-hard.
+% Proof sketch: Reduction from subgraph isomorphism (known NP-complete).
+% Our problem is strictly harder: we minimize a cost function over valid embeddings
+% (optimization variant), which is inapproximable in general \cite{rost2020hardness}.
+% This motivates our heuristic approach.
+
+% ---------- 3.3 ----------
+\subsection{Fault-Aware Mesh Partitioning}
+\label{sec:partitioning}
+
+% [FIGURE 3: Partitioning example]
+% Show a faulty physical mesh being recursively bisected into submeshes,
+% then submeshes grouped into super nodes.
+
+% --- P1: Recursive Coordinate Bisection (RCB) --- (4-5 sentences)
+% We partition the physical mesh into rectangular submeshes via RCB:
+% Recursively bisect along the longer dimension, splitting at midpoint.
+% Faulty nodes are excluded from submesh interiors.
+% Each submesh has: bounding box (ll, ur), center, set of healthy nodes.
+% Controlled by max_block_size parameter (e.g., 4).
+
+% --- P2: Submesh adjacency graph --- (3-4 sentences)
+% Build an adjacency graph over submeshes: two submeshes are adjacent if they
+% share a physical boundary with at least one healthy link crossing it.
+% This graph is the foundation for both candidate search and routing.
+
+% --- P3: Super node construction --- (3-4 sentences)
+% Group nearby submeshes into super nodes (BFS within super_node_range hops
+% on the submesh adjacency graph).
+% Build a KdTree over super node centers for O(log m) nearest-neighbor queries.
+% This two-level hierarchy (submeshes within super nodes) enables efficient
+% candidate search on meshes up to 512x512+.
+
+% ---------- 3.4 ----------
+\subsection{Hierarchical Mapping Algorithm}
 \label{sec:algorithm}
-% TODO: Core algorithm / heuristic for topology mapping
 
-\subsection{Hardware Support}
-\label{sec:hardware}
-% TODO: Any required hardware extensions or reconfiguration mechanisms
+% [ALGORITHM 1: Pseudocode for mapping pipeline]
+% function MAP(G_v, G_p, W):
+%   submeshes, adj, super_nodes <- PARTITION(G_p)
+%   anchor <- SELECT_ANCHOR(G_v, submeshes)
+%   mapping <- INIT_MAPPING(anchor)
+%   while mapping is incomplete:
+%     mapping <- EXPAND_FRONTIER(mapping, super_nodes, W)
+%   routing <- BUILD_ROUTING(mapping, submeshes, adj)
+%   return mapping, routing
+
+% --- P1: Anchor initialization --- (3-4 sentences)
+% Seed the mapping by placing the virtual mesh center at the physical mesh's
+% root submesh center (closest to geometric center).
+% Map the anchor's immediate neighbors to establish initial cost baseline.
+% The anchor determines the global orientation of the mapping.
+
+% --- P2: Frontier expansion --- (5-6 sentences)
+% [ALGORITHM 2: Pseudocode for EXPAND_FRONTIER]
+% For each unmapped virtual node adjacent to the current frontier:
+%   (1) Compute ideal physical location via geometric transform from existing mapping.
+%   (2) Level-1 search: KdTree query for nearest search_nearest_n super nodes.
+%   (3) Level-2 search: Score submesh centers within top super nodes; select top-K.
+%   (4) Parallel evaluation: For each of expansion_trials physical candidates,
+%       compute cost = node_cost + hop_cost_weight * path_cost + workflow_cost_weight * workflow_cost.
+%   (5) Commit best candidate; update frontier and candidate pool.
+% This two-level search avoids O(m) exhaustive scan over the entire physical mesh.
+
+% --- P3: Cost model --- (5-6 sentences)
+% The cost function has three components:
+% (1) Coordinate cost: penalizes stretch between mapped virtual neighbors.
+%     Uses 2-hop lookahead with exponential decay weighting.
+%     Manhattan distance for 4-connected; Chebyshev for 8-connected.
+% (2) Congestion cost: tracks per-link utilization via LinkUsage.
+%     Penalizes placing nodes that would overload already-congested paths.
+% (3) Workflow cost: weights by communication intensity from workload analysis.
+%     GEMM systolic flows are weighted differently than GEMV broadcast-reduce.
+% RANSAC geometric consistency check filters outlier placements.
+
+% ---------- 3.5 ----------
+\subsection{Deadlock-Free Routing}
+\label{sec:routing}
+
+% [FIGURE 4: Submesh hierarchy routing example]
+% Show a packet path: ascend through submesh hierarchy to common ancestor,
+% then descend to destination submesh. Annotate "no re-ascent" constraint.
+
+% --- P1: The deadlock challenge --- (3-4 sentences)
+% On a regular mesh, XY dimension-order routing is trivially deadlock-free.
+% After remapping, physical paths between virtual neighbors may traverse multiple
+% submeshes in complex patterns. Naive shortest-path routing on the irregular
+% topology can create cyclic channel dependencies, leading to deadlock.
+% Cite: \cite{dally1987deadlock, duato1993theory}
+
+% --- P2: Submesh hierarchy routing --- (5-6 sentences)
+% We construct a routing hierarchy from the submesh adjacency tree (rooted BFS tree).
+% For any src-dst pair, the physical path is computed in two phases:
+%   Phase 1 (ascend): route from source submesh up to the lowest common ancestor (LCA)
+%   in the submesh tree.
+%   Phase 2 (descend): route from LCA down to destination submesh.
+% Constraint: once a packet begins descending, it never re-ascends.
+% This ascend-then-descend (up*/down*-style) constraint creates an acyclic channel
+% dependency graph, guaranteeing deadlock freedom by the Dally-Seitz theorem.
+% Within each submesh, standard XY routing (or diagonal XY) is used.
+% Cite: \cite{dally1987deadlock, ariadne2011}
+
+% --- P3: Routing database --- (3-4 sentences)
+% All physical paths are precomputed and cached in a RoutingDatabase.
+% For multicast/broadcast data flows, paths are merged into BFS routing trees
+% to minimize duplicate transmissions.
+% The routing map is constructed once at mapping time and stored in routing tables.
+
+% --- P4: Correctness argument --- (3-4 sentences)
+% Theorem: The submesh-hierarchy routing scheme is deadlock-free.
+% Proof sketch: The ascend-then-descend constraint induces a total order on channel
+% usage (channels used in ascending phase < channels in descending phase).
+% By the Dally-Seitz CDG acyclicity condition, no deadlock can occur.
+% This holds for arbitrary fault patterns as long as the submesh adjacency graph
+% is connected (which our partitioner guarantees for viable mappings).
+
+% ---------- 3.6 ----------
+\subsection{Exploiting Heterogeneous Physical Links}
+\label{sec:diagonal}
+
+% --- P1: Mesh-to-diagonal-mesh remapping --- (4-5 sentences)
+% Modern large-scale chips (e.g., Cerebras WSE) have physical fabrics with diagonal
+% links for redundancy, but expose only a regular 4-connected mesh to software.
+% Our remapper can map a virtual 4-connected mesh onto an 8-connected (diagonal)
+% physical mesh, leveraging diagonal links for shorter physical paths.
+% The cost model switches to Chebyshev distance (max(dx,dy)) for 8-connected,
+% naturally preferring diagonal shortcuts when available.
+% This reduces average hop count and alleviates congestion on critical paths.
 
 %% ============================================================
-%% 4. IMPLEMENTATION (0.5-1 page)
+%% 4. IMPLEMENTATION (0.5--1 page)
 %% ============================================================
 \section{Implementation}
 \label{sec:implementation}
 
-% TODO: Simulation framework, tools used, RTL/cycle-accurate details
-% Describe how the remapper is implemented/integrated
+% --- P1: Remapper implementation --- (4-5 sentences)
+% Model-Defined Remapper is implemented in Rust (~15K LoC) as a modular workspace:
+% NoC module (topology models), IR module (workload representation),
+% Mapper module (partitioning, mapping, routing), Simulator module (performance prediction).
+% Parallel candidate evaluation uses Rayon (work-stealing thread pool).
+% Seeded ChaCha20 RNG ensures reproducibility across runs.
+
+% --- P2: Simulator --- (3-4 sentences)
+% We use a custom cycle-level NoC simulator supporting wormhole routing with
+% virtual channels, configurable buffer sizes, and bandwidth parameters.
+% A lightweight flat-array simulator variant handles 512x512+ meshes efficiently.
+% Performance prediction uses a communication predictor (wormhole pipelining model)
+% and a computation predictor (per-PE step model) with three congestion modes
+% (best/average/worst).
+
+% --- P3: Workload modeling --- (3-4 sentences)
+% Workloads are modeled as WorkGraphs: directed acyclic graphs of communication
+% and computation operations.
+% We implement two canonical workloads:
+% (1) Systolic GEMM: row-column data flows with step-synchronized compute.
+% (2) Broadcast-reduce GEMV: broadcast input vector, local multiply, reduce partial sums.
+% Both use the IR's DataFlow abstraction (unicast, multicast, reduce, alltoall).
+
+% [TABLE 1: Implementation parameters]
+% bandwidth_per_cycle: 32 bits/cycle
+% flops_per_pu_per_cycle: 16
+% hop_latency_cycles: 1.0
+% buffer_size: 4 (VC buffer depth)
+% mapper parameters: max_block_size=4, search_nearest_n=5, search_top_k=3, expansion_trials=10
 
 %% ============================================================
-%% 5. EVALUATION (2.5-3 pages)
+%% 5. EVALUATION (2.5--3 pages)
 %% ============================================================
 \section{Evaluation}
 \label{sec:evaluation}
 
+% We answer the following questions:
+% Q1: How much utilization does Model-Defined Remapper recover vs. discard-based approaches?
+% Q2: What is the performance overhead of remapped execution vs. healthy mesh?
+% Q3: Does mesh-to-diagonal-mesh remapping improve performance?
+% Q4: How does the approach scale with mesh size and defect rate?
+% Q5: What is the mapping runtime?
+
+% ---------- 5.1 ----------
 \subsection{Methodology}
 \label{sec:methodology}
-% TODO: Simulation setup, baselines, benchmarks/workloads, metrics
-% Table: Simulation configuration parameters
 
-\subsection{Performance Results}
+% --- P1: Experimental setup --- (4-5 sentences)
+% Virtual mesh sizes: 64x64, 128x128, 256x256, 512x512.
+% Physical mesh: 1.5x virtual size (e.g., 96x96, 192x192, 384x384, 768x768).
+% Fault injection: seeded random (ChaCha20, seed=42).
+%   PE fault rate: 7%, Router fault rate: 3.5%, Link fault rate: 0.7%.
+% Workloads: GEMM (matrix sizes 128, 256, 512), GEMV (same).
+
+% --- P2: Baselines --- (3-4 sentences)
+% (1) Healthy: ideal performance on defect-free mesh (upper bound).
+% (2) Discard: largest defect-free rectangular sub-mesh (lower bound on utilization).
+% (3) Zhang et al. (TVLSI 2009): simulated annealing topology reconfiguration (prior SOTA).
+% (4) ARIADNE (PACT 2011): topology-agnostic up*/down* reconfiguration (deadlock-free baseline).
+
+% --- P3: Metrics --- (3-4 sentences)
+% Utilization: fraction of healthy nodes used vs. total healthy nodes available.
+% Performance: predicted execution cycles (best/average/worst congestion).
+% Mapping quality: node cost (stretch), path cost (congestion).
+% Mapping time: wall-clock seconds for the mapping algorithm.
+
+% [TABLE 2: Experimental configuration summary]
+
+% ---------- 5.2 ----------
+\subsection{Utilization Recovery}
+\label{sec:results-util}
+
+% [FIGURE 5: Utilization comparison bar chart]
+% Compare utilization across: Discard, Zhang et al., ARIADNE, Ours
+% Across mesh sizes 64x64 to 512x512.
+%
+% --- P1: Main result --- (4-5 sentences)
+% Model-Defined Remapper achieves [X%] utilization vs. [Y%] for discard
+% and [Z%] for Zhang et al. at 512x512 scale.
+% The gap widens at higher defect rates because our hierarchical search
+% can find pockets of healthy nodes that discard misses.
+% At 7% PE fault rate on 512x512, discard wastes ~[A]% of healthy nodes;
+% our approach wastes only ~[B]%.
+
+% ---------- 5.3 ----------
+\subsection{Performance}
 \label{sec:results-perf}
-% TODO: Latency, throughput comparisons vs. baselines
-% Figures: Performance comparison charts
 
-\subsection{Energy and Area Analysis}
-\label{sec:results-energy}
-% TODO: Energy consumption, area overhead analysis
+% [FIGURE 6: Performance (cycles) comparison — GEMM]
+% [FIGURE 7: Performance (cycles) comparison — GEMV]
+% Lines: Healthy, Ours (best/avg/worst), Zhang, ARIADNE, Discard
+% X-axis: mesh size. Y-axis: execution cycles.
+%
+% --- P1: GEMM results --- (4-5 sentences)
+% For systolic GEMM, our remapper achieves [X%] of healthy-mesh performance
+% at 256x256, compared to [Y%] for Zhang and [Z%] for ARIADNE.
+% The workflow-aware cost model places communicating virtual neighbors closer
+% together on critical systolic paths.
 
+% --- P2: GEMV results --- (3-4 sentences)
+% For broadcast-reduce GEMV, the performance gap is [smaller/larger] because
+% [broadcast patterns are more/less sensitive to hop stretch].
+% Our approach outperforms baselines by [X%] due to congestion-aware link placement.
+
+% ---------- 5.4 ----------
+\subsection{Diagonal Link Exploitation}
+\label{sec:results-diagonal}
+
+% [FIGURE 8: Mesh-to-mesh vs. mesh-to-diagonal-mesh comparison]
+% Compare: physical 4-connected (standard remapping) vs. physical 8-connected
+% (diagonal mesh remapping).
+% Metrics: average hop distance, congestion, execution cycles.
+%
+% --- P1: Hop reduction --- (3-4 sentences)
+% Remapping onto 8-connected physical mesh reduces average hop distance by [X%]
+% compared to 4-connected physical mesh.
+% Diagonal links provide shortcuts for non-axis-aligned virtual neighbors.
+
+% --- P2: Performance improvement --- (3-4 sentences)
+% This translates to [Y%] cycle reduction for GEMM and [Z%] for GEMV.
+% The improvement demonstrates that exposing all physical routing resources
+% to the remapper — rather than hiding them behind a regular 4-connected view —
+% yields tangible performance gains.
+
+% ---------- 5.5 ----------
 \subsection{Scalability}
 \label{sec:scalability}
-% TODO: Results across different topology sizes and configurations
 
+% [FIGURE 9: Mapping time vs. mesh size (log-log plot)]
+% [TABLE 3: Mapping statistics at each scale]
+%
+% --- P1: Runtime scaling --- (4-5 sentences)
+% Mapping time scales as O(N * log M) where N = virtual mesh size, M = physical mesh size.
+% At 512x512 (virtual) -> 768x768 (physical), mapping completes in [X] seconds
+% on 8 threads.
+% The hierarchical KdTree search keeps per-node cost at O(log M),
+% avoiding the O(M) exhaustive scan that limits prior approaches.
+% Zhang et al.'s SA-based approach does not scale beyond ~128x128.
+
+% --- P2: Mapping quality vs. scale --- (3-4 sentences)
+% Node cost and path cost remain bounded as mesh size increases,
+% demonstrating that our hierarchical partitioning maintains mapping quality.
+% Number of submeshes grows linearly with physical mesh area.
+
+% ---------- 5.6 ----------
 \subsection{Sensitivity Analysis}
 \label{sec:sensitivity}
-% TODO: How results change with key parameters
+
+% [FIGURE 10: Performance vs. defect rate (sweep 1%--15%)]
+% [FIGURE 11: Performance vs. defective_mesh_factor (1.2x, 1.5x, 2.0x)]
+%
+% --- P1: Defect rate sensitivity --- (3-4 sentences)
+% Performance degrades gracefully as defect rate increases from 1% to 15%.
+% At 15% PE fault rate, our approach still achieves [X%] of healthy performance,
+% while discard utilization drops below [Y%].
+
+% --- P2: Physical mesh sizing --- (3-4 sentences)
+% Larger defective_mesh_factor (more physical area per virtual node) improves
+% mapping quality but increases physical area.
+% Factor 1.5x provides the best quality/area tradeoff for 7% defect rates.
+
+% --- P3: Mapper parameter sensitivity --- (3-4 sentences)
+% search_nearest_n and expansion_trials: diminishing returns beyond 5 and 10 respectively.
+% hop_cost_weight: workflow-aware weighting improves GEMM by [X%] over topology-only cost.
 
 %% ============================================================
-%% 6. RELATED WORK (0.5-1 page)
+%% 6. RELATED WORK (0.5--1 page)
 %% ============================================================
 \section{Related Work}
 \label{sec:related}
 
-\subsection{NoC Topology Design}
-% TODO: Prior work on NoC topology design and optimization
+% ---------- 6.1 ----------
+\subsection{Topology Reconfiguration for Defect Tolerance}
+% Zhang et al. (DATE 2008, TVLSI 2009) proposed core-level redundancy with topology
+% reconfiguration via simulated annealing, proved NP-completeness.
+% Zhang et al. (DATE 2010) extended with performance-asymmetry awareness.
+% Ke et al. (ASP-DAC 2012) used Hungarian algorithm for timing-similarity mapping.
+% Qian et al. (JPDC 2024) proposed greedy-memetic algorithm.
+% Ding et al. (TACO 2025) introduced two-stage degradation-based reconfiguration.
+% Key difference: all prior works evaluate at <128 cores, use topology-only cost
+% (no workload awareness), and don't address deadlock-free routing explicitly.
+% Cite: \cite{zhang2009topology, zhang2010virtualization, ke2012hungarian, qian2024memetic, ding2025twostage}
 
-\subsection{Topology Mapping and Virtualization}
-% TODO: Prior work on application-to-topology mapping, NPU virtualization
+% ---------- 6.2 ----------
+\subsection{Deadlock-Free Routing on Irregular Topologies}
+% Foundational: Dally-Seitz CDG theorem, Turn Model (Glass \& Ni), Duato's theory.
+% ARIADNE (PACT 2011): topology-agnostic reconfiguration with up*/down* routing.
+% uDIREC (MICRO 2013): unified diagnosis + MOUNT routing on faulty NoC.
+% Vicis (DATE 2009): resilient routing tolerating 50% router failures.
+% DeFT (DATE 2022): deadlock-free fault-tolerant routing for 2.5D chiplets.
+% Key difference: these works handle routing but don't provide virtual topology
+% abstraction or workload-aware mapping.
+% Cite: \cite{dally1987deadlock, ariadne2011, udirec2013, vicis2009, deft2022}
 
-\subsection{Chiplet Integration}
-% TODO: Prior work on chiplet architectures and interposer design
+% ---------- 6.3 ----------
+\subsection{NoC Application Mapping}
+% Hu \& Marculescu (TCAD 2005): branch-and-bound energy-aware mapping.
+% Kadri \& Koudil (JSA 2019): survey of fault-tolerant mapping techniques.
+% Neurocomputing 2020: deadlock-free mapping for neural network chips.
+% Key difference: task mapping assigns tasks to PEs but doesn't remap the
+% entire virtual topology; most works assume healthy topology.
+% Cite: \cite{hu2005mapping, kadri2019survey}
+
+% ---------- 6.4 ----------
+\subsection{Accelerator Virtualization}
+% vNPU (ISCA 2025): topology-aware virtualization for inter-core connected NPUs.
+% Xue et al. (MICRO 2024): hardware-assisted NPU virtualization for cloud.
+% Cerebras (SIGOPS 2025): WSE driver remaps around defects.
+% Key difference: vNPU targets NPU multi-tenancy (not defect tolerance);
+% Cerebras only restores regularity (doesn't optimize for workload or exploit extra links).
+% Cite: \cite{feng2025vnpu, xue2024npu, cerebras2025sigops}
 
 %% ============================================================
 %% 7. CONCLUSION (0.5 page)
@@ -176,8 +636,27 @@
 \section{Conclusion}
 \label{sec:conclusion}
 
-% TODO: Summary of contributions and key results
-% TODO: Future directions
+% --- P1: Summary --- (4-5 sentences)
+% We presented Model-Defined Remapper, a framework for defect-tolerant
+% virtual-to-physical topology mapping on large-scale 2D mesh architectures.
+% Our hierarchical mapping heuristic scales to 512x512 meshes while optimizing
+% for workload-specific communication patterns.
+% Our submesh-hierarchy routing scheme guarantees deadlock-free delivery on
+% arbitrarily defective topologies.
+% We demonstrated that mesh-to-diagonal-mesh remapping exploits unused routing
+% resources in Cerebras-style fabrics.
+
+% --- P2: Key results --- (2-3 sentences)
+% Evaluation across multiple scales, fault rates, and workloads shows [X%]
+% utilization recovery over discard-based approaches and [Y%] of healthy-mesh
+% performance for GEMM and GEMV workloads.
+% Our approach is the first to combine large-scale topology remapping,
+% workload-aware optimization, and provably deadlock-free routing in a unified framework.
+
+% --- P3: Future directions --- (2-3 sentences)
+% Future work includes runtime remapping for online fault discovery,
+% extension to non-mesh virtual topologies (torus, 3D mesh),
+% and integration with real hardware platforms (Cerebras SDK, chiplet interposers).
 
 %% ============================================================
 %% REFERENCES

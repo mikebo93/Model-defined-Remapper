@@ -1,72 +1,221 @@
 %% ============================================================
-%% Core NoC / Topology Mapping Papers
+%% Wafer-Scale / Large-Scale Architectures
 %% ============================================================
 
-@inproceedings{yin2023modular,
-  author = "Yin, Jieming and others",
-  title = "Modular Routing Design for Chiplet-Based Systems Using a Composable, Topology-Agnostic, Deadlock-Free Approach",
-  year = "2023",
-  booktitle = "Proceedings of the 50th Annual International Symposium on Computer Architecture"
+@inproceedings{lie2019wse,
+  author = "Sean Lie",
+  title = "Wafer-Scale Deep Learning",
+  year = "2019",
+  booktitle = "Proceedings of Hot Chips 31"
 }
 
-@inproceedings{zheng2021nnbaton,
-  author = "Zheng, Zhehui and others",
-  title = "{NN-Baton}: {DNN} Workload Orchestration and Chiplet Granularity Exploration for Multichip Accelerators",
-  year = "2021",
-  booktitle = "Proceedings of the 48th Annual International Symposium on Computer Architecture"
-}
-
-@inproceedings{kannan2020kite,
-  author = "Kannan, Aporva and others",
-  title = "Kite: Heterogeneous Interposer Topologies via Accurate Interconnect Modeling",
-  year = "2020",
-  booktitle = "Proceedings of the 57th ACM/IEEE Design Automation Conference"
-}
-
-@inproceedings{chen2024chipletizer,
-  author = "Chen, Yuyang and others",
-  title = "Chipletizer: Repartitioning {SoCs} for Cost-Effective Chiplet Integration",
+@article{lie2024cerebras,
+  author = "Sean Lie",
+  title = "Inside the {Cerebras} Wafer-Scale Cluster",
   year = "2024",
-  booktitle = "Proceedings of the 29th Asia and South Pacific Design Automation Conference"
+  journal = "IEEE Micro",
+  volume = "44",
+  number = "3"
 }
 
-@inproceedings{guo2022gia,
-  author = "Guo, Yinxiao and others",
-  title = "{GIA}: A Reusable General Interposer Architecture for Agile Chiplet Integration",
+@article{cerebras2025sigops,
+  author = "{Cerebras Systems}",
+  title = "Wafer-Scale {AI} Compute: A System Software Perspective",
+  year = "2025",
+  journal = "ACM SIGOPS ;login:"
+}
+
+%% ============================================================
+%% Topology Reconfiguration for Defect Tolerance
+%% ============================================================
+
+@inproceedings{zhang2008defect,
+  author = "Liang Zhang and Yinhe Han and Qiang Xu and Xiaowei Li",
+  title = "Defect Tolerance in Homogeneous Manycore Processors Using Core-Level Redundancy with Unified Topology",
+  year = "2008",
+  booktitle = "Proceedings of the Design, Automation and Test in Europe Conference (DATE)"
+}
+
+@article{zhang2009topology,
+  author = "Liang Zhang and Yinhe Han and Qiang Xu and Xiaowei Li",
+  title = "On Topology Reconfiguration for Defect-Tolerant {NoC}-Based Homogeneous Manycore Systems",
+  year = "2009",
+  journal = "IEEE Transactions on Very Large Scale Integration (VLSI) Systems",
+  volume = "17",
+  number = "9",
+  pages = "1173--1186"
+}
+
+@inproceedings{zhang2010virtualization,
+  author = "Liang Zhang and Yunji Yu and Jian Dong and Yinhe Han and Shaojun Ren and Xiaowei Li",
+  title = "Performance-Asymmetry-Aware Topology Virtualization for Defect-Tolerant {NoC}-Based Many-Core Processors",
+  year = "2010",
+  booktitle = "Proceedings of the Design, Automation and Test in Europe Conference (DATE)"
+}
+
+@inproceedings{ke2012hungarian,
+  author = "Yubin Ke and Xiaowei Li and others",
+  title = "Hungarian Algorithm Based Virtualization for Defect-Tolerant {NoC}-Based Many-Core Systems",
+  year = "2012",
+  booktitle = "Proceedings of the 17th Asia and South Pacific Design Automation Conference (ASP-DAC)"
+}
+
+@article{qian2024memetic,
+  author = "Junyan Qian and Chuanfang Zhang and Zheng Wu and Hao Ding and Long Li",
+  title = "Efficient Topology Reconfiguration for {NoC}-Based Multiprocessors: A Greedy-Memetic Algorithm",
+  year = "2024",
+  journal = "Journal of Parallel and Distributed Computing",
+  volume = "190"
+}
+
+@article{ding2025twostage,
+  author = "Hao Ding and Peiling Song and Yelin Li and Junyan Qian",
+  title = "A Two-Stage Degradation-Based Topology Reconfiguration Algorithm for Fault-Tolerant Multiprocessor Arrays",
+  year = "2025",
+  journal = "ACM Transactions on Architecture and Code Optimization",
+  volume = "22",
+  number = "3"
+}
+
+%% ============================================================
+%% Deadlock-Free Routing
+%% ============================================================
+
+@article{dally1987deadlock,
+  author = "William J. Dally and Charles L. Seitz",
+  title = "Deadlock-Free Message Routing in Multiprocessor Interconnection Networks",
+  year = "1987",
+  journal = "IEEE Transactions on Computers",
+  volume = "36",
+  number = "5"
+}
+
+@article{duato1993theory,
+  author = "Jos\'{e} Duato",
+  title = "A New Theory of Deadlock-Free Adaptive Routing in Wormhole Networks",
+  year = "1993",
+  journal = "IEEE Transactions on Parallel and Distributed Systems",
+  volume = "4",
+  number = "12"
+}
+
+@article{glass1994turn,
+  author = "Christopher J. Glass and Lionel M. Ni",
+  title = "The Turn Model for Adaptive Routing",
+  year = "1994",
+  journal = "Journal of the ACM",
+  volume = "41",
+  number = "5"
+}
+
+@inproceedings{ariadne2011,
+  author = "Konstantinos Aisopos and Andrew DeOrio and Li-Shiuan Peh and Valeria Bertacco",
+  title = "{ARIADNE}: Agnostic Reconfiguration in a Disconnected Network Environment",
+  year = "2011",
+  booktitle = "Proceedings of the International Conference on Parallel Architectures and Compilation Techniques (PACT)"
+}
+
+@inproceedings{udirec2013,
+  author = "Konstantinos Aisopos and Andrew DeOrio and Valeria Bertacco",
+  title = "{uDIREC}: Unified Diagnosis and Reconfiguration for Frugal Bypass of {NoC} Faults",
+  year = "2013",
+  booktitle = "Proceedings of the 46th IEEE/ACM International Symposium on Microarchitecture (MICRO)"
+}
+
+@inproceedings{vicis2009,
+  author = "Daniel Fick and Andrew DeOrio and Jin Hu and Valeria Bertacco and Dennis Blaauw and David Sylvester",
+  title = "Vicis: A Highly Resilient Routing Algorithm for Fault-Tolerant {NoCs}",
+  year = "2009",
+  booktitle = "Proceedings of the Design, Automation and Test in Europe Conference (DATE)"
+}
+
+@inproceedings{deft2022,
+  author = "Erfan Taheri and Sudeep Pasricha and Mahdi Nikdast",
+  title = "{DeFT}: A Deadlock-Free and Fault-Tolerant Routing Algorithm for 2.5{D} Chiplet Networks",
   year = "2022",
-  booktitle = "Proceedings of the IEEE/ACM International Conference on Computer-Aided Design"
+  booktitle = "Proceedings of the Design, Automation and Test in Europe Conference (DATE)"
 }
 
-@article{feng2025vnpu,
-  author = "Feng, Yuan and Feng, Yufei and others",
+%% ============================================================
+%% NoC Application Mapping
+%% ============================================================
+
+@article{hu2005mapping,
+  author = "Jingcao Hu and Radu Marculescu",
+  title = "Energy- and Performance-Aware Mapping for Regular {NoC} Architectures",
+  year = "2005",
+  journal = "IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems",
+  volume = "24",
+  number = "4"
+}
+
+@article{kadri2019survey,
+  author = "Amira Kadri and Mustapha Koudil",
+  title = "A Survey on Fault-Tolerant Application Mapping Techniques for Network-on-Chip",
+  year = "2019",
+  journal = "Journal of Systems Architecture",
+  volume = "92",
+  pages = "39--52"
+}
+
+%% ============================================================
+%% NPU / Accelerator Virtualization
+%% ============================================================
+
+@inproceedings{feng2025vnpu,
+  author = "Yuan Feng and Yufei Feng and others",
   title = "{vNPU}: Topology-Aware Virtualization over Inter-Core Connected Neural Processing Units",
   year = "2025",
-  journal = "Proceedings of the 52nd Annual International Symposium on Computer Architecture"
-}
-
-@inproceedings{lin2023tpnoc,
-  author = "Lin, Yijun and others",
-  title = "{TPNoC}: Efficient Topology Reconfigurable {NoC} Generator",
-  year = "2023",
-  booktitle = "Proceedings of the Great Lakes Symposium on VLSI"
-}
-
-@inproceedings{kumar2021scalable,
-  author = "Kumar, Sarvesh and others",
-  title = "A Scalable {NoC} Topology Targeting Network Performance",
-  year = "2021",
-  booktitle = "Proceedings of the 14th International Workshop on Network on Chip Architectures"
+  booktitle = "Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA)"
 }
 
 @inproceedings{xue2024npu,
-  author = "Xue, Yuqi and Liu, Yiqi and Nai, Lifeng and Huang, Jian",
+  author = "Yuqi Xue and Yiqi Liu and Lifeng Nai and Jian Huang",
   title = "Hardware-Assisted Virtualization of Neural Processing Units for Cloud Platforms",
   year = "2024",
-  booktitle = "Proceedings of the 57th IEEE/ACM International Symposium on Microarchitecture"
+  booktitle = "Proceedings of the 57th IEEE/ACM International Symposium on Microarchitecture (MICRO)"
 }
 
 %% ============================================================
-%% Additional References (to be expanded)
+%% VNE Complexity
+%% ============================================================
+
+@article{rost2020hardness,
+  author = "Matthias Rost and Stefan Schmid",
+  title = "On the Hardness and Inapproximability of Virtual Network Embeddings",
+  year = "2020",
+  journal = "IEEE/ACM Transactions on Networking",
+  volume = "28",
+  number = "2"
+}
+
+%% ============================================================
+%% Chiplet / NoC Topology
+%% ============================================================
+
+@inproceedings{yin2023modular,
+  author = "Jieming Yin and others",
+  title = "Modular Routing Design for Chiplet-Based Systems Using a Composable, Topology-Agnostic, Deadlock-Free Approach",
+  year = "2023",
+  booktitle = "Proceedings of the 50th Annual International Symposium on Computer Architecture (ISCA)"
+}
+
+@inproceedings{zheng2021nnbaton,
+  author = "Zhehui Zheng and others",
+  title = "{NN-Baton}: {DNN} Workload Orchestration and Chiplet Granularity Exploration for Multichip Accelerators",
+  year = "2021",
+  booktitle = "Proceedings of the 48th Annual International Symposium on Computer Architecture (ISCA)"
+}
+
+@inproceedings{kannan2020kite,
+  author = "Aporva Kannan and others",
+  title = "Kite: Heterogeneous Interposer Topologies via Accurate Interconnect Modeling",
+  year = "2020",
+  booktitle = "Proceedings of the 57th ACM/IEEE Design Automation Conference (DAC)"
+}
+
+%% ============================================================
+%% LaTeX
 %% ============================================================
 
 @book{lamport94,
