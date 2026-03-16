@@ -45,8 +45,43 @@ Exposing spare components creates an **irregular topology**, which raises severa
 2. **Quality evaluation:** How do we measure whether a given remapping is good? Metrics must capture communication cost, load balance, and workload-specific performance (e.g., systolic array efficiency).
 3. **Deadlock freedom:** Rerouting around defective nodes, routers, and channels on an irregular topology can introduce cyclic dependencies in the routing. How can we guarantee deadlock-free routing under arbitrary defect patterns?
 
-### 7. Our Approach (Detailed in Later Sections)
+
+
+
+#### Unrefined section start ####
+
+
+### 7. Related Works
+1. Zhang et al. 2008 — "Defect Tolerance in Homogeneous Manycore Processors Using Core-Level Redundancy with Unified Topology"
+
+
+
+
+
+
+#### Unrefined section end ####
+
+
+
+
+
+
+### 8. Our Approach (Detailed in Later Sections)
 
 To address these challenges, we propose a hierarchical remapping framework that is both efficient and scalable:
 - **Hierarchical search:** RCB partitioning + KdTree super nodes + parallel candidate evaluation — enabling remapping of meshes up to 512×512 in reasonable time.
 - **Deadlock-free routing:** Submesh hierarchy routing (ascend-then-descend, no re-ascent) guarantees deadlock freedom on irregular, defect-induced topologies.
+
+
+
+#### Unrefined section start ####
+
+1. Abstract
+2. Introduction
+
+
+
+
+
+
+#### Unrefined section end ####
