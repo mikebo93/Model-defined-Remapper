@@ -64,7 +64,9 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
 
 ## 3. Challenges (~0.75 page)
 
-### 3.1 Scalability
+> **Structural note:** Each challenge below maps 1:1 to a design component in §4. This makes each design decision feel motivated by a concrete, named problem.
+
+### 3.1 Scalability → addressed by §4.2 Hierarchical Spatial Search
 - The remapping problem is a constrained subgraph isomorphism variant → NP-hard.
 - Exact algorithms (Ullmann 1976, VF2 2004, VF3 2017) have exponential worst-case complexity. They work well for small pattern graphs (tens of nodes) but are completely intractable for meshes with 10K–260K+ nodes.
   - *Ullmann:* backtracking with refinement; O(n! · m^n) worst case.
@@ -72,13 +74,13 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
 - Simulated annealing (Zhang et al. TVLSI 2009) and memetic algorithms (Qian et al. 2024) improve over exact methods but remain too slow at wafer scale due to their iterative global search.
 - **Need:** a hierarchical heuristic that decomposes the problem spatially for near-linear scaling.
 
-### 3.2 Application Specificity
+### 3.2 Application Specificity → addressed by §4.3 Workload-Aware Cost Function
 - Topology-only cost metrics (minimize total hop count) ignore the actual workload.
 - If two virtual nodes never communicate, their physical distance is irrelevant.
 - GEMM (systolic) has strict nearest-neighbor communication; GEMV (broadcast+reduce) has a different pattern with long-range collective operations.
 - **Need:** a workload-aware cost function that weights mapping quality by actual communication volume.
 
-### 3.3 Routing Correctness
+### 3.3 Routing Correctness → addressed by §4.4–4.5 Static Routing + Submesh Hierarchy
 - **Deadlock:** Intersecting routing paths can create cyclic *channel* dependencies in the CDG → messages block forever waiting for each other.
 - **Infinite duplication (even for unicast):** If a routing path visits the same physical node twice (a cycle in the *path*, not the CDG), the stateless static routing table at that node cannot distinguish first visit from second. Since it must encode output ports for both visits, every arrival fans out to all ports → the cycle produces copies that return and fan out again → exponential duplication, never terminates. This is the same mechanism as a broadcast storm but triggered by path cycles, not multicast fan-out.
 - **Multicast amplification:** For multicast operations (e.g., GEMV broadcast/reduce), the problem compounds — branch intersection at a router duplicates flits from converging branches, each of which may themselves cycle.
@@ -143,41 +145,118 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
 
 ## 6. Evaluation (~2.5 pages)
 
-### 6.1 Experimental Setup
+> **Evaluation philosophy (learned from Stratum/MICRO '25):** Evaluate at multiple levels — algorithm, architecture, workload, and practicality. Each experiment should answer a specific question. Include overhead analysis to preempt reviewer concerns.
+
+### 6.1 Analytical Performance Model
+
+Establish a latency model to frame the experimental results and explain the remapper's trade-off.
+
+**Transmission time decomposition:**
+```
+t_transmission = t_routing + t_link_queuing + t_ejection_queuing
+```
+- `t_routing`: deterministic latency from injection at src to ejection at dst (modelable)
+- `t_link_queuing`: waiting for shared links/channels along the path (hard to predict, measured via simulation)
+- `t_ejection_queuing`: waiting to eject at dst when multiple messages arrive simultaneously (hard to predict, measured via simulation)
+
+**Routing latency (Hockney model + wormhole routing):**
+```
+t_routing = α + β·M_msg
+
+α = H·(t_rt + t_ch)          -- head flit traversal: H hops, each through a router and a channel
+β = 1 / BW                   -- pipeline drain rate; BW = frequency × flit_size (bytes/sec)
+M_msg = message size in bytes -- depends on element count × element size S
+```
+
+**GEMM latency model (Cannon-type algorithm):**
+
+For matrix dimension N×N on mesh dimension M×M, element size S bytes (e.g., 2 for FP16, 4 for FP32):
+```
+t_GEMM = t_comp + t_comm + t_queuing
+
+t_comp = (N/M)³ · M · t_mac              = N³/(M² · FLOPS_per_PE)    [decreases as 1/M²]
+t_comm = H·(t_rt + t_ch) + M·(N/M)²·S/BW = H·(t_rt + t_ch) + N²·S/(M·BW)
+         ↑ head flit (once)                  ↑ pipeline serialization (M steps)
+t_queuing ≈ f(link_sharing, path_intersection)  [measured via simulation]
+
+where:
+  N×N      = matrix dimension
+  M×M      = mesh dimension (number of PEs = M²)
+  S        = element size in bytes (2 for FP16, 4 for FP32, etc.)
+  H        = physical hops per virtual neighbor shift (= 1 on healthy mesh, > 1 after remapping)
+  t_mac    = time per multiply-accumulate (MAC) operation (= 1/FLOPS_per_PE)
+  t_rt     = router traversal latency
+  t_ch     = channel traversal latency
+  BW       = link bandwidth in bytes/sec (= frequency × flit_size)
+```
+
+**Queuing on a healthy mesh:**
+All PEs shift data in the same direction simultaneously (A left, B up). Each link carries exactly one message per step → no link contention (t_link_queuing = 0). However, each PE receives submatrices from both its horizontal and vertical neighbors (A shifts left, B shifts up), so if these two arrivals overlap in time, ejection queuing occurs (t_ejection_queuing > 0 even on healthy mesh).
+
+**After remapping, queuing worsens:**
+- Virtual 1-hop becomes physical multi-hop (H > 1) → different virtual shifts share physical links → t_link_queuing > 0 (new source of delay)
+- Ejection queuing effect is ambiguous: asymmetric physical path lengths may desynchronize arrivals (reducing overlap vs. healthy mesh where both neighbors are 1-hop away and arrive simultaneously), but irregular mappings may also cause unexpected convergence from multiple sources. Net effect depends on the specific mapping — measured via simulation
+
+**U-shape trade-off (key insight for the paper):**
+
+Given fixed N, plot t_GEMM vs M:
+- t_comp = N³/M² · t_mac → decreases with M
+- t_comm: head flit term grows with H(M), pipeline serialization term N²·S/(M·BW) decreases with M
+- t_queuing increases with M (denser mapping → more path intersections)
+
+On a **healthy mesh** (H=1, t_queuing≈0): clear optimal M minimizing computation + communication.
+
+On a **remapped mesh** (H>=1, t_queuing>=0): the optimal M shifts left (fewer PEs preferred). But with defects, you may not have the ideal defect-free mesh size available.
+
+**The remapper's value proposition:** given a fixed defective substrate, the remapper lets you use **more cores** (larger M) to reduce computation, accepting higher H and some queuing — a trade-off that discard-based approaches cannot make, because they are stuck with whatever defect-free rectangle they find. The workload-aware cost function directly minimizes H and t_queuing for the chosen M.
+
+*Use this model to: (a) explain U-shape in experimental results, (b) show where remapped performance sits relative to healthy optimal, (c) attribute performance gaps to specific terms (hop stretch vs queuing vs drain).*
+
+### 6.2 Experimental Setup
 - **Topologies:** Virtual 2D mesh sizes (64×64, 128×128, 256×256, 512×512); Physical mesh at 1.5× area with random faults.
 - **Fault model:** PU faults ~7%, Router faults ~3.5%, Channel faults ~0.7% (based on Cerebras-class defect rates).
 - **Workloads:** GEMM (systolic array), GEMV (broadcast+reduce).
 - **Baselines:**
-  - Healthy (no faults, ideal topology).
-  - Defective without remapping (largest defect-free sub-mesh / discard).
+  - Healthy (no faults, ideal topology) — upper bound.
+  - Defective without remapping (largest defect-free sub-mesh / discard) — a common baseline approach. (Note: Cerebras does perform remapping but has never disclosed their algorithm; we cannot use them as a direct baseline.)
   - Prior art: Zhang et al. (TVLSI 2009) topology reconfiguration (if reproducible at scale).
 
-### 6.2 Mapping Quality
+### 6.3 Algorithm Level: Mapping Quality
 - Node cost (geometric displacement) and path cost (weighted hop count) vs. baselines.
-- Utilization: fraction of healthy physical nodes used.
+- Utilization: fraction of healthy physical nodes used (ours vs. discard — this is the core value proposition).
 - Visualization of mapping at representative scales (e.g., 64×64 on a faulty 96×96).
 
-### 6.3 Workload Performance
+### 6.4 Workload Level: End-to-End Performance
 - GEMM latency and throughput vs. healthy baseline and discard baseline.
 - GEMV latency and throughput vs. healthy baseline and discard baseline.
-- Breakdown: how much performance loss comes from longer hops vs. congestion.
+- Breakdown: how much performance loss comes from longer hops vs. congestion vs. path stretch.
+- *This is the "money figure" — show remapping recovers most of the healthy-baseline performance while using far more silicon than discard.*
 
-### 6.4 Scalability
+### 6.5 Algorithm Level: Scalability
 - Mapping time vs. mesh size (64×64 to 512×512).
+- Memory footprint of the mapper at each scale.
 - Compare scaling behavior: our hierarchical approach vs. SA (Zhang et al.) vs. exact (projected intractability).
+- *Demonstrate near-linear scaling — this is a key differentiator.*
 
-### 6.5 Diagonal Link Utilization
+### 6.6 Architecture Level: Diagonal Link Utilization
 - Mesh-to-DiagonalMesh remapping: performance improvement from exploiting 8-connected links.
 - Comparison: regular mesh remapping (4-connected) vs. diagonal mesh remapping (8-connected) on the same faulty substrate.
 
-### 6.6 Sensitivity Analysis
-- Varying fault rates: how does mapping quality and workload performance degrade?
-- Varying physical-to-virtual area ratio (1.2×, 1.5×, 2.0×).
-- (Optional) Varying workload communication patterns.
+### 6.7 Sensitivity Analysis (multi-dimensional, like Stratum)
+- **Fault rate** (3%, 5%, 7%, 10%): how does mapping quality and workload performance degrade? — shows robustness.
+- **Physical-to-virtual area ratio** (1.2×, 1.5×, 2.0×): how much spare area is needed? — shows the redundancy-utilization trade-off.
+- **Mesh scale** (64² to 512²): does the approach maintain quality at scale? — shows scalability.
+- **Workload type** (GEMM vs GEMV): does workload-aware cost actually help? — shows application specificity.
 
-### 6.7 Deadlock Freedom Verification
+### 6.8 Architecture Level: Deadlock Freedom Verification
 - CDG analysis: confirm acyclicity of channel dependency graph under submesh hierarchy routing for all experimental configurations.
 - (Optional) Simulation-based verification: no deadlock observed in N million cycles.
+
+### 6.9 Overhead Analysis (preempt reviewer concerns)
+- **Mapping time:** one-time cost at boot/manufacturing — report wall-clock seconds/minutes per scale.
+- **Routing table size:** memory per node for static routing tables.
+- **Path stretch:** average and worst-case path length under submesh hierarchy routing vs. shortest path on same topology.
+- **Throughput gap:** quantify remaining performance loss vs. healthy baseline and attribute it to specific causes (hop stretch, congestion, imperfect mapping).
 
 ---
 
@@ -243,16 +322,18 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
 
 | Section | Pages |
 |---------|-------|
-| 1. Introduction | 1.5 |
-| 2. Background & Motivation | 1.5 |
-| 3. Challenges | 0.75 |
+| 1. Introduction | 1.25 |
+| 2. Background & Motivation | 1.25 |
+| 3. Challenges | 0.5 |
 | 4. Design | 2.5 |
 | 5. Implementation | 0.5 |
-| 6. Evaluation | 2.5 |
+| 6. Evaluation (incl. analytical model) | 3.25 |
 | 7. Related Work | 1.0 |
 | 8. Discussion | 0.5 |
 | 9. Conclusion | 0.25 |
 | **Total** | **~11** |
+
+> **Note:** Evaluation expanded to 3 pages to accommodate multi-level evaluation structure and overhead analysis (learned from Stratum/MICRO '25 review expectations). Trimmed Introduction and Challenges slightly to compensate.
 
 ---
 
