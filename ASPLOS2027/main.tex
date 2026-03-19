@@ -1,0 +1,99 @@
+%%
+%% ASPLOS 2027 Submission Template
+%% Based on ACM acmart sigplan format with ASPLOS-required options
+%%
+%% Commands for TeXCount
+%TC:macro \cite [option:text,text]
+%TC:macro \citep [option:text,text]
+%TC:macro \citet [option:text,text]
+%TC:envir table 0 1
+%TC:envir table* 0 1
+%TC:envir tabular [ignore] word
+%TC:envir displaymath 0 word
+%TC:envir math 0 word
+%TC:envir comment 0 0
+%%
+%% ASPLOS 2027 requires: sigplan, anonymous, review, nonacm
+%% Default 10pt font (do NOT override to 9pt)
+%%
+\documentclass[sigplan,anonymous,review,nonacm]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+%% Rights management — nonacm mode
+\setcopyright{none}
+\copyrightyear{2027}
+\acmYear{2027}
+\acmDOI{XXXXXXX.XXXXXXX}
+
+%% Conference info
+\acmConference[ASPLOS '27]{The 32nd ACM International Conference on Architectural Support for Programming Languages and Operating Systems}{2027}{TBD}
+
+\acmISBN{978-X-XXXX-XXXX-X/XX/XX}
+
+%% Page numbers required for review
+\settopmatter{printfolios=true}
+\settopmatter{printacmref=false}
+
+\begin{document}
+
+\title{Paper Title Here}
+
+%%
+%% Abstract
+%%
+
+%%%%%% -- PAPER CONTENT STARTS -- %%%%%%%%
+
+\begin{abstract}
+
+  Abstract text here.
+
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+
+
+\section{Background}
+
+
+
+\section{Motivation}
+
+
+
+\section{Design}
+
+
+
+\section{Implementation}
+
+
+
+\section{Evaluation}
+
+
+
+\section{Related Work}
+
+
+
+\section{Conclusion}
+
+
+
+%%%%%%% -- PAPER CONTENT ENDS -- %%%%%%%%
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{sample-base}
+
+%% ASPLOS allows unlimited appendices (not counted toward 11-page limit)
+%\appendix
+%\section{Supplementary Material}
+
+\end{document}
