@@ -1,4 +1,31 @@
 %% ============================================================
+%% GPU / CPU Yield Binning
+%% ============================================================
+
+@techreport{nvidia2020ga102,
+  author = "{NVIDIA}",
+  title = "{NVIDIA} {Ampere} {GA102} {GPU} Architecture Whitepaper",
+  year = "2020",
+  note = "Full die: 84 SMs; RTX 3090 enables 82 SMs, RTX 3080 enables 68 SMs. Defective SMs fused off for yield binning"
+}
+
+@online{nvidia2022hopper,
+  author = "{NVIDIA}",
+  title = "{NVIDIA} {Hopper} Architecture In-Depth",
+  year = "2022",
+  url = "https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/",
+  note = "GH100: 144 SMs on die; H100 SXM enables 132 (8.3\\% disabled); H100 PCIe enables 114 (20.8\\% disabled)"
+}
+
+@inproceedings{talpes2023dojo,
+  author = "Emil Talpes and others",
+  title = "The Microarchitecture of {DOJO}",
+  year = "2023",
+  booktitle = "IEEE Micro (Hot Chips 34 presentation)",
+  note = "360 physical core sites, 354 enabled, 6 spare (1.7\\% redundancy) on D1 mesh processor"
+}
+
+%% ============================================================
 %% Wafer-Scale / Large-Scale Architectures
 %% ============================================================
 
@@ -23,6 +50,14 @@
   title = "Wafer-Scale {AI} Compute: A System Software Perspective",
   year = "2025",
   journal = "ACM SIGOPS ;login:"
+}
+
+@inproceedings{luczynski2024reduce,
+  author = "Piotr Luczynski and Lukas Gianinazzi and Patrick Iff and Leighton Wilson and Daniele De Sensi and Torsten Hoefler",
+  title = "Near-Optimal Wafer-Scale Reduce",
+  year = "2024",
+  booktitle = "Proceedings of the 33rd International Symposium on High-Performance Parallel and Distributed Computing (HPDC)",
+  note = "Confirms Cerebras proprietary defect-aware routing: ``If there are any defects, a proprietary process will route around them.''"
 }
 
 %% ============================================================
@@ -78,6 +113,46 @@
 }
 
 %% ============================================================
+%% Virtual Channels in Modern Hardware
+%% ============================================================
+
+@online{cerebras2024sdk,
+  author = "{Cerebras Systems}",
+  title = "A Conceptual View --- {Cerebras SDK} Documentation (v1.4.0)",
+  year = "2024",
+  url = "https://sdk.cerebras.net/computing-with-cerebras",
+  note = "Documents 24 routable colors (virtual channels) per PE, time-multiplexed and non-blocking"
+}
+
+@mastersthesis{dai2021cascade,
+  author = "Miles Dai",
+  title = "Reverse Engineering the {Intel Cascade Lake} Mesh Interconnect",
+  year = "2021",
+  school = "Massachusetts Institute of Technology",
+  note = "Identifies 4 ring types (AD/AK/BL/IV) as separate virtual networks in Intel mesh. Available at https://dspace.mit.edu/handle/1721.1/143928"
+}
+
+@inproceedings{li2024minvn,
+  author = "Weihang Li and Andr\'{e}s Goens and Nicolai Oswald and Vijay Nagarajan and Daniel J. Sorin",
+  title = "Determining the Minimum Number of Virtual Networks for Different Coherence Protocols",
+  year = "2024",
+  booktitle = "Proceedings of the 51st Annual International Symposium on Computer Architecture (ISCA)",
+  note = "Proves all practical coherence protocols require $\geq$2 virtual networks for deadlock freedom"
+}
+
+%% ============================================================
+%% GPU NoC Architecture
+%% ============================================================
+
+@inproceedings{lopes2024gpunoc,
+  author = "Anderson L. Lopes and others",
+  title = "Uncovering Real {GPU} {NoC} Characteristics",
+  year = "2024",
+  booktitle = "Proceedings of the 57th IEEE/ACM International Symposium on Microarchitecture (MICRO)",
+  note = "Reverse-engineers NVIDIA GPU NoC; reveals crossbar-based internal interconnect. PDF not downloaded (ACM paywall)"
+}
+
+%% ============================================================
 %% Deadlock-Free Routing
 %% ============================================================
 
@@ -97,6 +172,58 @@
   journal = "IEEE Transactions on Parallel and Distributed Systems",
   volume = "4",
   number = "12"
+}
+
+%% ============================================================
+%% VC-Free Mesh Products (Adversary Cases)
+%% ============================================================
+
+@inproceedings{dedinechin2017kalray,
+  author = "Beno\^{i}t Dupont de Dinechin and others",
+  title = "Network-on-Chip Service Guarantees on the {Kalray} {MPPA-256} Bostan Processor",
+  year = "2017",
+  booktitle = "Proceedings of the 2nd International Workshop on Advanced Interconnect Solutions and Technologies for Emerging Computing Systems (AISTECS)",
+  note = "Explicitly documents wormhole switching without virtual channels; deadlock freedom via Hamiltonian Odd-Even routing on regular 2D mesh"
+}
+
+@article{navaridas2015spinnaker,
+  author = "Javier Navaridas and Mikel Luj\'{a}n and others",
+  title = "{SpiNNaker}: Enhanced Multicast Routing",
+  year = "2015",
+  journal = "Parallel Computing",
+  volume = "45",
+  pages = "49--66",
+  note = "Confirms no virtual channels in SpiNNaker; deadlock handled via packet dropping and emergency rerouting, not prevention"
+}
+
+@article{olofsson2016epiphanyv,
+  author = "Andreas Olofsson",
+  title = "{Epiphany-V}: A 1024-core 64-bit {RISC} System-on-Chip",
+  year = "2016",
+  journal = "arXiv preprint arXiv:1610.01832",
+  note = "1024 cores on single die; eMesh designed for multi-chip extension via LVDS links (up to 64 chips in seamless 2D mesh); 3 physical networks, XY routing, no VCs; no defect tolerance for multi-chip topology"
+}
+
+@article{furber2013spinnaker,
+  author = "Steve B. Furber and David R. Lester and others",
+  title = "Overview of the {SpiNNaker} System Architecture",
+  year = "2013",
+  journal = "IEEE Transactions on Computers",
+  volume = "62",
+  number = "12",
+  pages = "2454--2467",
+  note = "57,600 chips in triangular torus; no VCs (area constraints); deadlock handled by packet dropping and emergency rerouting"
+}
+
+@article{chiu2000oddeven,
+  author = "Ge-Ming Chiu",
+  title = "The Odd-Even Turn Model for Adaptive Routing",
+  year = "2000",
+  journal = "IEEE Transactions on Parallel and Distributed Systems",
+  volume = "11",
+  number = "7",
+  pages = "729--738",
+  note = "Achieves deadlock-free adaptive routing on regular meshes without VCs via odd-even turn restrictions"
 }
 
 @article{glass1994turn,

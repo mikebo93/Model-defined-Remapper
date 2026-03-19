@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mapper Module — Presentation</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
+  #root { width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+/* ───────── colors ───────── */
+const C = {
+  bg: '#0f172a', card: '#1e293b', border: '#475569',
+  accent: '#38bdf8', accent2: '#a78bfa', accent3: '#34d399',
+  fault: '#ef4444', mapped: '#38bdf8', frontier: '#facc15',
+  candidate: '#a78bfa', unmapped: '#475569', text: '#e2e8f0',
+  dim: '#94a3b8', good: '#34d399', bad: '#f87171',
+  warn: '#f59e0b',
+};
+
+/* ───────── shared SVG helpers ───────── */
+function GridNode({ x, y, r = 8, fill, stroke, strokeWidth = 2, label, labelColor, labelDy }) {
+  return (
+    <g>
+      <circle cx={x} cy={y} r={r} fill={fill} stroke={stroke || fill} strokeWidth={strokeWidth} />
+      {label && <text x={x} y={y + (labelDy || r + 14)} textAnchor="middle" fill={labelColor || C.dim} fontSize="11">{label}</text>}
+    </g>
+  );
+}
+
+function AngleArc({ cx, cy, r, startAngle, endAngle, color, label, labelR }) {
+  const toRad = d => d * Math.PI / 180;
+  const sx = cx + r * Math.cos(toRad(startAngle));
+  const sy = cy - r * Math.sin(toRad(startAngle));
+  const ex = cx + r * Math.cos(toRad(endAngle));
+  const ey = cy - r * Math.sin(toRad(endAngle));
+  const sweep = endAngle - startAngle > 180 ? 1 : 0;
+  const lx = cx + (labelR || r + 12) * Math.cos(toRad((startAngle + endAngle) / 2));
+  const ly = cy - (labelR || r + 12) * Math.sin(toRad((startAngle + endAngle) / 2));
+  return (
+    <g>
+      <path d={`M ${sx} ${sy} A ${r} ${r} 0 ${sweep} 0 ${ex} ${ey}`}
+        fill="none" stroke={color} strokeWidth={2.5} />
+      {label && <text x={lx} y={ly + 4} textAnchor="middle" fill={color} fontSize="13" fontWeight="bold">{label}</text>}
+    </g>
+  );
+}
+
+/* helper: section label */
+function SectionBadge({ label, color }) {
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 700, color, background: `${color}18`,
+      padding: '3px 10px', borderRadius: 20, border: `1px solid ${color}40`,
+      letterSpacing: 0.5, textTransform: 'uppercase',
+    }}>{label}</span>
+  );
+}
+
+/* ───────── slide wrapper ───────── */
+function Slide({ title, subtitle, section, sectionColor, children }) {
+  return (
+    <div style={{
+      width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', padding: '28px 48px 64px',
+      background: C.bg, position: 'relative', overflow: 'hidden',
+    }}>
+      {section && <div style={{ marginBottom: 6, flexShrink: 0 }}><SectionBadge label={section} color={sectionColor || C.accent} /></div>}
+      {title && (
+        <div style={{ textAlign: 'center', marginBottom: subtitle ? 4 : 12, flexShrink: 0 }}>
+          <h1 style={{ fontSize: 34, fontWeight: 800, color: C.text, lineHeight: 1.2 }}>{title}</h1>
+        </div>
+      )}
+      {subtitle && (
+        <p style={{ fontSize: 14, color: C.dim, marginBottom: 10, textAlign: 'center', maxWidth: 800, flexShrink: 0, lineHeight: 1.5 }}>{subtitle}</p>
+      )}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: 0, overflow: 'hidden' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* helper: bullet card */
+function BulletCard({ icon, title, text, color, small }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: small ? '10px 14px' : '14px 18px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${color}`, maxWidth: 420 }}>
+      {icon && <span style={{ fontSize: small ? 18 : 22, flexShrink: 0 }}>{icon}</span>}
+      <div>
+        {title && <div style={{ fontSize: small ? 13 : 15, fontWeight: 700, color, marginBottom: 4 }}>{title}</div>}
+        <p style={{ fontSize: small ? 12 : 13, color: C.dim, lineHeight: 1.5 }}>{text}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════ SLIDE 1: TITLE ════════════ */
+function SlideTitle() {
+  return (
+    <Slide>
+      <div style={{ textAlign: 'center' }}>
+        <h1 style={{ fontSize: 48, fontWeight: 800, color: C.text, marginBottom: 12 }}>Fault-Tolerant, Workload-Aware</h1>
+        <h2 style={{ fontSize: 36, fontWeight: 400, color: C.accent, marginBottom: 20 }}>Mesh Remapping</h2>
+        <div style={{ width: 120, height: 3, background: C.accent, margin: '0 auto 24px', borderRadius: 2 }} />
+        <p style={{ fontSize: 16, color: C.dim, lineHeight: 1.6 }}>Mapping virtual program topologies onto defective physical meshes<br/>while optimizing for workload characteristics</p>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 2: AI WORKLOAD ════════════ */
+function SlideWorkload() {
+  // Matrix illustration helpers
+  const matCell = 14, matGap = 2;
+  function MatrixBlock({ x, y, rows, cols, color, label, labelY }) {
+    return (
+      <g>
+        <rect x={x} y={y} width={cols * (matCell + matGap) - matGap} height={rows * (matCell + matGap) - matGap} rx={3} fill={`${color}20`} stroke={color} strokeWidth={1.5} />
+        {Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => (
+          <rect key={`${r}${c}`} x={x + c * (matCell + matGap)} y={y + r * (matCell + matGap)} width={matCell} height={matCell} rx={2} fill={`${color}60`} />
+        )))}
+        {label && <text x={x + (cols * (matCell + matGap) - matGap) / 2} y={labelY || y - 6} textAnchor="middle" fill={color} fontSize="11" fontWeight="700">{label}</text>}
+      </g>
+    );
+  }
+  return (
+    <Slide section="Background" sectionColor={C.accent} title="AI Workload Characteristics" subtitle="LLM inference has two distinct phases with different resource demands.">
+      <div style={{ display: 'flex', gap: 32, alignItems: 'stretch' }}>
+        {/* Prefill = GEMM: Matrix × Matrix */}
+        <div style={{ width: 310, background: C.card, borderRadius: 14, padding: 16, border: `2px solid ${C.accent}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.accent, textAlign: 'center', marginBottom: 4 }}>Prefill</div>
+          <div style={{ fontSize: 12, color: C.dim, textAlign: 'center', marginBottom: 10 }}>Process all input tokens in parallel</div>
+          <svg width={278} height={110} viewBox="0 0 278 110">
+            <MatrixBlock x={10} y={20} rows={5} cols={4} color={C.accent} label="Weight" />
+            <text x={88} y={62} fill={C.dim} fontSize="16" fontWeight="bold">×</text>
+            <MatrixBlock x={100} y={20} rows={4} cols={5} color={C.frontier} label="Tokens" />
+            <text x={188} y={62} fill={C.dim} fontSize="16" fontWeight="bold">=</text>
+            <MatrixBlock x={200} y={20} rows={5} cols={5} color={C.accent3} label="Output" />
+          </svg>
+          <div style={{ padding: '8px 10px', background: '#0f172a', borderRadius: 8, textAlign: 'center' }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: C.accent }}>GEMM </span>
+            <span style={{ fontSize: 12, color: C.dim }}>— Matrix × Matrix</span>
+            <div style={{ fontSize: 11, color: C.warn, fontWeight: 600, marginTop: 2 }}>Compute-bound</div>
+          </div>
+        </div>
+        {/* Arrow */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <svg width={32} height={32} viewBox="0 0 40 40"><polygon points="5,14 25,14 25,6 38,20 25,34 25,26 5,26" fill={C.border} /></svg>
+        </div>
+        {/* Decode = GEMV: Matrix × Vector */}
+        <div style={{ width: 310, background: C.card, borderRadius: 14, padding: 16, border: `2px solid ${C.accent2}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.accent2, textAlign: 'center', marginBottom: 4 }}>Decode</div>
+          <div style={{ fontSize: 12, color: C.dim, textAlign: 'center', marginBottom: 10 }}>Generate one token at a time</div>
+          <svg width={278} height={110} viewBox="0 0 278 110">
+            <MatrixBlock x={20} y={20} rows={5} cols={4} color={C.accent2} label="Weight" />
+            <text x={98} y={62} fill={C.dim} fontSize="16" fontWeight="bold">×</text>
+            <MatrixBlock x={110} y={20} rows={4} cols={1} color={C.frontier} label="1 tok" />
+            <text x={148} y={62} fill={C.dim} fontSize="16" fontWeight="bold">=</text>
+            <MatrixBlock x={162} y={20} rows={5} cols={1} color={C.accent3} label="Out" />
+          </svg>
+          <div style={{ padding: '8px 10px', background: '#0f172a', borderRadius: 8, textAlign: 'center' }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: C.accent2 }}>GEMV </span>
+            <span style={{ fontSize: 12, color: C.dim }}>— Matrix × Vector</span>
+            <div style={{ fontSize: 11, color: C.warn, fontWeight: 600, marginTop: 2 }}>Memory-bound</div>
+          </div>
+        </div>
+      </div>
+      <p style={{ fontSize: 13, color: C.dim, marginTop: 12, textAlign: 'center', flexShrink: 0 }}>
+        Different phases demand different resource allocation — <span style={{ color: C.warn, fontWeight: 600 }}>remapping should be workload-aware</span>.
+      </p>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 3: DEFECT TOLERANCE ════════════ */
+function SlideDefectTolerance() {
+  // Mesh with diagonal links, spare row, defects replaced
+  const G = 36, P = 24;
+  const rows = 4, cols = 5, extraRow = 1;
+  const totalRows = rows + extraRow;
+  const defects = new Set(['2,2', '4,0']);
+  const replacements = { '2,2': [2, 4], '4,0': [4, 4] };
+  const mW = cols * G + P * 2 + 30;
+  const mH = totalRows * G + P * 2 + 14;
+  const mx = x => P + x * G + G / 2;
+  const my = y => P + (totalRows - 1 - y) * G + G / 2;
+
+  return (
+    <Slide section="Background" sectionColor={C.accent} title="Hardware Defect Tolerance" subtitle="Chips are designed with redundant components. Firmware replaces faulty ones and exposes a regular topology.">
+      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+        {/* Clos diagram */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 12, border: `1px solid ${C.accent3}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.accent3, textAlign: 'center', marginBottom: 6 }}>Clos — redundant paths</div>
+          <svg width={200} height={140} viewBox="0 0 200 140">
+            {[50, 100, 150].map((x, i) => <circle key={`t${i}`} cx={x} cy={18} r={7} fill={C.accent3} />)}
+            {[35, 85, 115, 165].map((x, i) => <circle key={`m${i}`} cx={x} cy={60} r={6} fill={C.accent3} opacity={0.7} />)}
+            {[20, 50, 80, 100, 120, 150, 180].map((x, i) => <circle key={`b${i}`} cx={x} cy={102} r={5} fill={C.accent3} opacity={0.5} />)}
+            {[50, 100, 150].map(tx => [35, 85, 115, 165].map((mx2, j) =>
+              <line key={`tm${tx}${j}`} x1={tx} y1={25} x2={mx2} y2={53} stroke={C.accent3} strokeWidth={0.8} opacity={0.25} />
+            ))}
+            {[35, 85].map(mx2 => [20, 50, 80].map((bx, j) =>
+              <line key={`mb1${mx2}${j}`} x1={mx2} y1={67} x2={bx} y2={95} stroke={C.accent3} strokeWidth={0.8} opacity={0.25} />
+            ))}
+            {[115, 165].map(mx2 => [100, 120, 150, 180].map((bx, j) =>
+              <line key={`mb2${mx2}${j}`} x1={mx2} y1={67} x2={bx} y2={95} stroke={C.accent3} strokeWidth={0.8} opacity={0.25} />
+            ))}
+            <text x={100} y={130} textAnchor="middle" fill={C.dim} fontSize="10">Easy remap: swap paths</text>
+          </svg>
+        </div>
+
+        {/* Mesh with diagonal links + spare row */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 12, border: `1px solid ${C.accent}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, textAlign: 'center', marginBottom: 6 }}>Mesh — spare row replaces defects</div>
+          <svg width={mW} height={mH} viewBox={`0 0 ${mW} ${mH}`}>
+            {/* Spare row bg */}
+            <rect x={P - 3} y={my(totalRows - 1) - G / 2 + 2} width={cols * G + 6} height={G} rx={4}
+              fill="rgba(167,139,250,0.06)" stroke={C.accent2} strokeWidth={1} strokeDasharray="3 3" />
+            <text x={mW - 6} y={my(totalRows - 1) + 3} textAnchor="end" fill={C.accent2} fontSize="9" fontWeight="600">spare</text>
+            <defs><marker id="arrowG2" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill={C.accent3} /></marker></defs>
+            {/* H/V + diagonal links */}
+            {Array.from({ length: totalRows }, (_, y) =>
+              Array.from({ length: cols }, (_, x) => {
+                const sp = y >= rows;
+                const elems = [];
+                const lc = sp ? 'rgba(167,139,250,0.15)' : '#334155';
+                if (x < cols - 1) elems.push(<line key={`h${x}${y}`} x1={mx(x)} y1={my(y)} x2={mx(x+1)} y2={my(y)} stroke={lc} strokeWidth={1} />);
+                if (y < totalRows - 1) elems.push(<line key={`v${x}${y}`} x1={mx(x)} y1={my(y)} x2={mx(x)} y2={my(y+1)} stroke={sp || y+1>=rows ? 'rgba(167,139,250,0.15)' : lc} strokeWidth={1} />);
+                // Diagonal links
+                if (x < cols - 1 && y < totalRows - 1) {
+                  const dc = sp || y+1>=rows ? 'rgba(167,139,250,0.1)' : 'rgba(71,85,105,0.4)';
+                  elems.push(<line key={`d1${x}${y}`} x1={mx(x)} y1={my(y)} x2={mx(x+1)} y2={my(y+1)} stroke={dc} strokeWidth={0.8} />);
+                  elems.push(<line key={`d2${x}${y}`} x1={mx(x+1)} y1={my(y)} x2={mx(x)} y2={my(y+1)} stroke={dc} strokeWidth={0.8} />);
+                }
+                return elems;
+              })
+            )}
+            {/* Replacement arrows */}
+            {Object.entries(replacements).map(([dk, [rx, ry]]) => {
+              const [dx2, dy2] = dk.split(',').map(Number);
+              return <line key={dk} x1={mx(dx2)} y1={my(dy2)} x2={mx(rx)} y2={my(ry)} stroke={C.accent3} strokeWidth={1.5} strokeDasharray="3 3" markerEnd="url(#arrowG2)" />;
+            })}
+            {/* Nodes */}
+            {Array.from({ length: totalRows }, (_, y) =>
+              Array.from({ length: cols }, (_, x) => {
+                const isDef = defects.has(`${x},${y}`);
+                const isRepl = Object.values(replacements).some(([rx, ry]) => rx === x && ry === y);
+                const isSp = y >= rows && !isRepl;
+                return (
+                  <g key={`n${x}${y}`}>
+                    <circle cx={mx(x)} cy={my(y)} r={isDef ? 7 : isRepl ? 7 : isSp ? 4 : 6}
+                      fill={isDef ? C.fault : isRepl ? C.accent3 : isSp ? 'transparent' : '#64748b'}
+                      stroke={isDef ? '#fca5a5' : isRepl ? C.accent3 : isSp ? C.accent2 : '#64748b'}
+                      strokeWidth={isDef ? 1.5 : 1} opacity={isDef ? 0.7 : isSp ? 0.4 : 1}
+                      strokeDasharray={isSp ? '2 2' : 'none'} />
+                    {isDef && <text x={mx(x)} y={my(y) + 3.5} textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">✕</text>}
+                    {isRepl && <text x={mx(x)} y={my(y) + 3.5} textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">✓</text>}
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+
+        {/* Bullet points */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 280 }}>
+          <BulletCard icon="🛡️" title="Redundancy by Design" text="Extra rows/columns built into the chip as spares." color={C.accent2} small />
+          <BulletCard icon="🔧" title="Firmware Remap" text="Firmware swaps in spare components, exposes clean topology." color={C.accent3} small />
+          <BulletCard icon="👁️" title="Transparent" text="User sees a perfect mesh — defects and spares are hidden." color={C.accent} small />
+        </div>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 4: YIELD PROBLEM ════════════ */
+function SlideYield() {
+  const waferR = 130;
+  const cx = 180, cy = 170;
+  const defects = useMemo(() => [
+    [-80, -40], [60, 20], [-30, 90], [100, -70], [-110, 60],
+    [40, -100], [-60, -110], [120, 80], [-20, 40], [90, -20],
+    [-100, -80], [30, 120], [-50, -20], [70, 60], [-90, 30],
+    [10, -60], [50, 100], [-70, 70], [110, -40], [-40, -90],
+  ], []);
+
+  return (
+    <Slide section="Background" sectionColor={C.accent} title="The Yield Problem" subtitle="At wafer scale, manufacturing defects are inevitable — but manageable.">
+      <div style={{ display: 'flex', gap: 40, alignItems: 'center' }}>
+        <svg width={280} height={280} viewBox="0 0 360 340">
+          <circle cx={cx} cy={cy} r={waferR} fill="#1e293b" stroke={C.border} strokeWidth={2} />
+          {Array.from({ length: 15 }, (_, i) => Array.from({ length: 15 }, (_, j) => {
+            const gx = cx - 140 + i * 20;
+            const gy = cy - 140 + j * 20;
+            const dist = Math.sqrt((gx - cx) ** 2 + (gy - cy) ** 2);
+            if (dist > waferR - 10) return null;
+            return <rect key={`${i}-${j}`} x={gx - 4} y={gy - 4} width={8} height={8} rx={1} fill="#334155" opacity={0.5} />;
+          }))}
+          {defects.map(([dx, dy], i) => {
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > waferR - 20) return null;
+            return (
+              <g key={i}>
+                <circle cx={cx + dx} cy={cy + dy} r={6} fill={C.fault} opacity={0.8} />
+                <text x={cx + dx} y={cy + dy + 4} textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">✕</text>
+              </g>
+            );
+          })}
+          <text x={cx} y={cy + waferR + 30} textAnchor="middle" fill={C.dim} fontSize="14">46,225mm² wafer with defects</text>
+        </svg>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 360 }}>
+          <BulletCard icon="🔬" title="Tiny Cores" text="Each core is ~0.05mm² — about 1% the size of a GPU SM. A defect disables one tiny core, not a large block." color={C.accent} small />
+          <BulletCard icon="🛡️" title="Fault-Tolerant Design" text="Cores are independent. Disable the bad ones, reroute around them. The wafer still operates at near-full capacity." color={C.accent3} small />
+          <div style={{ padding: '8px 12px', background: '#334155', borderRadius: 8, borderLeft: `3px solid ${C.accent}` }}>
+            <p style={{ fontSize: 11, color: C.dim, fontStyle: 'italic' }}>
+              Ref: Cerebras — "100x Defect Tolerance: How Cerebras Solved the Yield Problem"
+            </p>
+          </div>
+        </div>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 5: HIDDEN REDUNDANCY ════════════ */
+function SlideHiddenRedundancy() {
+  // Two side-by-side: "What user sees" (clean 4x4) vs "Actual physical" (5x5 with spares grayed, defects marked)
+  const G = 44, P = 20;
+  const userSize = 4, physSize = 5;
+  const uW = userSize * G + P * 2, uH = userSize * G + P * 2;
+  const pW = physSize * G + P * 2, pH = physSize * G + P * 2;
+  const ux = x => P + x * G + G / 2;
+  const uy = y => P + (userSize - 1 - y) * G + G / 2;
+  const px = x => P + x * G + G / 2;
+  const py = y => P + (physSize - 1 - y) * G + G / 2;
+  const physDefects = new Set(['1,3', '3,1']);
+  const physSpares = new Set(['0,4', '1,4', '2,4', '3,4', '4,0', '4,1', '4,2', '4,3', '4,4']);
+
+  return (
+    <Slide section="Motivation" sectionColor={C.warn} title="The Hidden Redundancy Problem" subtitle="Exposing a regular topology hides unused redundant components (cores, routers, channels).">
+      <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
+        {/* User view */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.accent}` }}>
+          <div style={{ color: C.accent, fontWeight: 700, fontSize: 13, marginBottom: 6, textAlign: 'center' }}>What User Sees</div>
+          <svg width={uW} height={uH} viewBox={`0 0 ${uW} ${uH}`}>
+            {Array.from({ length: userSize }, (_, y) => Array.from({ length: userSize }, (_, x) => {
+              const e = [];
+              if (x < userSize - 1) e.push(<line key={`h${x}${y}`} x1={ux(x)} y1={uy(y)} x2={ux(x+1)} y2={uy(y)} stroke="#475569" strokeWidth={1.5} />);
+              if (y < userSize - 1) e.push(<line key={`v${x}${y}`} x1={ux(x)} y1={uy(y)} x2={ux(x)} y2={uy(y+1)} stroke="#475569" strokeWidth={1.5} />);
+              return e;
+            }))}
+            {Array.from({ length: userSize }, (_, y) => Array.from({ length: userSize }, (_, x) => (
+              <circle key={`n${x}${y}`} cx={ux(x)} cy={uy(y)} r={8} fill={C.accent} stroke={C.accent} strokeWidth={1.5} />
+            )))}
+            <text x={uW / 2} y={uH - 4} textAnchor="middle" fill={C.accent} fontSize="11" fontWeight="600">Clean 4×4 mesh</text>
+          </svg>
+        </div>
+
+        {/* Arrow */}
+        <div style={{ display: 'flex', alignItems: 'center', paddingTop: 100 }}>
+          <span style={{ fontSize: 13, color: C.dim, textAlign: 'center' }}>vs.</span>
+        </div>
+
+        {/* Physical reality */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.warn}` }}>
+          <div style={{ color: C.warn, fontWeight: 700, fontSize: 13, marginBottom: 6, textAlign: 'center' }}>Actual Physical Mesh</div>
+          <svg width={pW} height={pH} viewBox={`0 0 ${pW} ${pH}`}>
+            {/* Spare region highlight */}
+            <rect x={px(4) - G / 2} y={py(4) - G / 2} width={G} height={physSize * G} rx={4}
+              fill="rgba(245,158,11,0.05)" stroke={C.warn} strokeWidth={1} strokeDasharray="3 3" />
+            <rect x={px(0) - G / 2} y={py(4) - G / 2} width={physSize * G} height={G} rx={4}
+              fill="rgba(245,158,11,0.05)" stroke={C.warn} strokeWidth={1} strokeDasharray="3 3" />
+
+            {Array.from({ length: physSize }, (_, y) => Array.from({ length: physSize }, (_, x) => {
+              const e = [];
+              const key = `${x},${y}`;
+              const isSp = physSpares.has(key);
+              const isDef = physDefects.has(key);
+              const lnColor = (a, b) => a || b ? 'rgba(245,158,11,0.15)' : '#334155';
+              const dlnColor = (a, b) => a || b ? 'rgba(245,158,11,0.08)' : 'rgba(71,85,105,0.35)';
+              if (x < physSize - 1)
+                e.push(<line key={`h${x}${y}`} x1={px(x)} y1={py(y)} x2={px(x+1)} y2={py(y)}
+                  stroke={lnColor(isSp || physSpares.has(`${x+1},${y}`), isDef || physDefects.has(`${x+1},${y}`))} strokeWidth={1.5} />);
+              if (y < physSize - 1)
+                e.push(<line key={`v${x}${y}`} x1={px(x)} y1={py(y)} x2={px(x)} y2={py(y+1)}
+                  stroke={lnColor(isSp || physSpares.has(`${x},${y+1}`), isDef || physDefects.has(`${x},${y+1}`))} strokeWidth={1.5} />);
+              // Diagonal links
+              if (x < physSize - 1 && y < physSize - 1) {
+                const anySpare = isSp || physSpares.has(`${x+1},${y+1}`) || physSpares.has(`${x+1},${y}`) || physSpares.has(`${x},${y+1}`);
+                e.push(<line key={`d1${x}${y}`} x1={px(x)} y1={py(y)} x2={px(x+1)} y2={py(y+1)} stroke={dlnColor(anySpare, false)} strokeWidth={0.8} />);
+                e.push(<line key={`d2${x}${y}`} x1={px(x+1)} y1={py(y)} x2={px(x)} y2={py(y+1)} stroke={dlnColor(anySpare, false)} strokeWidth={0.8} />);
+              }
+              return e;
+            }))}
+            {Array.from({ length: physSize }, (_, y) => Array.from({ length: physSize }, (_, x) => {
+              const key = `${x},${y}`;
+              const isDef = physDefects.has(key);
+              const isSp = physSpares.has(key);
+              return (
+                <g key={`n${x}${y}`}>
+                  <circle cx={px(x)} cy={py(y)} r={isDef ? 9 : isSp ? 6 : 8}
+                    fill={isDef ? C.fault : isSp ? 'transparent' : '#64748b'}
+                    stroke={isDef ? '#fca5a5' : isSp ? C.warn : '#64748b'}
+                    strokeWidth={isDef ? 2 : 1.5}
+                    opacity={isDef ? 0.7 : isSp ? 0.4 : 1}
+                    strokeDasharray={isSp ? '2 2' : 'none'} />
+                  {isDef && <text x={px(x)} y={py(y) + 4} textAnchor="middle" fill="white" fontSize="9" fontWeight="bold">✕</text>}
+                </g>
+              );
+            }))}
+            <text x={pW / 2} y={pH - 4} textAnchor="middle" fill={C.warn} fontSize="11" fontWeight="600">5×5 with defects + unused spares</text>
+          </svg>
+        </div>
+      </div>
+      <p style={{ fontSize: 13, color: C.dim, marginTop: 10, textAlign: 'center', flexShrink: 0 }}>
+        The spare components (cores, routers, channels) are <span style={{ color: C.warn, fontWeight: 600 }}>wasted</span> — they exist but are hidden from the user.
+      </p>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 6: SYMMETRIC vs ASYMMETRIC ════════════ */
+function SlideTopology() {
+  return (
+    <Slide section="Motivation" sectionColor={C.warn} title="Symmetric vs. Asymmetric Topology" subtitle="Remapping difficulty depends heavily on the network topology type.">
+      <div style={{ display: 'flex', gap: 32, alignItems: 'stretch' }}>
+        {/* Clos */}
+        <div style={{ width: 320, background: C.card, borderRadius: 14, padding: 20, border: `2px solid ${C.accent3}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.accent3, textAlign: 'center', marginBottom: 12 }}>Clos / Fat-Tree</div>
+          <div style={{ fontSize: 13, color: C.dim, textAlign: 'center', marginBottom: 16 }}>Symmetric topology</div>
+          {/* Simple Clos diagram */}
+          <svg width={280} height={120} viewBox="0 0 280 120">
+            {/* Top level */}
+            {[70, 140, 210].map((x, i) => <circle key={`t${i}`} cx={x} cy={20} r={8} fill={C.accent3} />)}
+            {/* Mid level */}
+            {[50, 120, 160, 230].map((x, i) => <circle key={`m${i}`} cx={x} cy={60} r={7} fill={C.accent3} opacity={0.7} />)}
+            {/* Bottom level */}
+            {[30, 70, 110, 150, 170, 210, 250].map((x, i) => <circle key={`b${i}`} cx={x} cy={100} r={6} fill={C.accent3} opacity={0.5} />)}
+            {/* Lines top-mid */}
+            {[70, 140, 210].map((tx) => [50, 120, 160, 230].map((mx, j) =>
+              <line key={`tm${tx}${j}`} x1={tx} y1={28} x2={mx} y2={52} stroke={C.accent3} strokeWidth={1} opacity={0.3} />
+            ))}
+            {/* Lines mid-bottom */}
+            {[50, 120].map(mx => [30, 70, 110].map((bx, j) =>
+              <line key={`mb1${mx}${j}`} x1={mx} y1={68} x2={bx} y2={92} stroke={C.accent3} strokeWidth={1} opacity={0.3} />
+            ))}
+            {[160, 230].map(mx => [150, 170, 210, 250].map((bx, j) =>
+              <line key={`mb2${mx}${j}`} x1={mx} y1={68} x2={bx} y2={92} stroke={C.accent3} strokeWidth={1} opacity={0.3} />
+            ))}
+          </svg>
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 12, color: C.good }}>✓ Multiple equal paths between any pair</div>
+            <div style={{ fontSize: 12, color: C.good }}>✓ Relatively easy remap strategy</div>
+            <div style={{ fontSize: 12, color: C.warn }}>⚠ May have some congestion</div>
+          </div>
+        </div>
+
+        {/* Mesh */}
+        <div style={{ width: 320, background: C.card, borderRadius: 14, padding: 20, border: `2px solid ${C.fault}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.fault, textAlign: 'center', marginBottom: 12 }}>Mesh</div>
+          <div style={{ fontSize: 13, color: C.dim, textAlign: 'center', marginBottom: 16 }}>Asymmetric topology</div>
+          {/* Mesh diagram with a defect */}
+          <svg width={280} height={120} viewBox="0 0 280 120">
+            {Array.from({ length: 4 }, (_, r) => Array.from({ length: 6 }, (_, c) => {
+              const x = 30 + c * 44, y = 15 + r * 30;
+              const isDef = (c === 3 && r === 1);
+              const elems = [];
+              if (c < 5 && !(isDef || (c + 1 === 3 && r === 1)))
+                elems.push(<line key={`h${c}${r}`} x1={x} y1={y} x2={x + 44} y2={y} stroke="#475569" strokeWidth={1} />);
+              if (r < 3 && !(isDef || (c === 3 && r + 1 === 1)))
+                elems.push(<line key={`v${c}${r}`} x1={x} y1={y} x2={x} y2={y + 30} stroke="#475569" strokeWidth={1} />);
+              elems.push(<circle key={`n${c}${r}`} cx={x} cy={y} r={isDef ? 8 : 6}
+                fill={isDef ? C.fault : '#64748b'} opacity={isDef ? 0.7 : 1} />);
+              if (isDef) elems.push(<text key={`x${c}${r}`} x={x} y={y + 4} textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">✕</text>);
+              return elems;
+            }))}
+          </svg>
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 12, color: C.fault }}>✗ Reachability can break with defects</div>
+            <div style={{ fontSize: 12, color: C.fault }}>✗ Dead/live-lock avoidance is difficult</div>
+            <div style={{ fontSize: 12, color: C.fault }}>✗ No clear strategy at large scale</div>
+          </div>
+        </div>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 7: RESOURCE WASTE ════════════ */
+function SlideResourceWaste() {
+  // Helper: draw NxM mesh grid with scattered defects and highlight max pure mesh
+  function MeshDiagram({ cols, rows, defectSet, maxMeshRect, label, borderColor, w, h }) {
+    const g = Math.min((w - 20) / cols, (h - 30) / rows);
+    const ox = (w - (cols - 1) * g) / 2, oy = (h - 30 - (rows - 1) * g) / 2;
+    const nx = c => ox + c * g;
+    const ny = r => oy + r * g;
+    return (
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+        {/* Max pure mesh highlight */}
+        {maxMeshRect && (
+          <rect x={nx(maxMeshRect[0]) - g/2 + 2} y={ny(maxMeshRect[1]) - g/2 + 2}
+            width={(maxMeshRect[2] - maxMeshRect[0]) * g + g - 4} height={(maxMeshRect[3] - maxMeshRect[1]) * g + g - 4}
+            rx={4} fill="rgba(56,189,248,0.08)" stroke={C.accent} strokeWidth={1.5} strokeDasharray="4 3" />
+        )}
+        {/* Links */}
+        {Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => {
+          const e = [];
+          const isDef = defectSet.has(`${c},${r}`);
+          if (c < cols - 1) {
+            const nDef = defectSet.has(`${c+1},${r}`);
+            e.push(<line key={`h${c}${r}`} x1={nx(c)} y1={ny(r)} x2={nx(c+1)} y2={ny(r)}
+              stroke={(isDef || nDef) ? 'rgba(239,68,68,0.15)' : '#475569'} strokeWidth={1} />);
+          }
+          if (r < rows - 1) {
+            const nDef = defectSet.has(`${c},${r+1}`);
+            e.push(<line key={`v${c}${r}`} x1={nx(c)} y1={ny(r)} x2={nx(c)} y2={ny(r+1)}
+              stroke={(isDef || nDef) ? 'rgba(239,68,68,0.15)' : '#475569'} strokeWidth={1} />);
+          }
+          return e;
+        }))}
+        {/* Nodes */}
+        {Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => {
+          const isDef = defectSet.has(`${c},${r}`);
+          return (
+            <g key={`n${c}${r}`}>
+              <circle cx={nx(c)} cy={ny(r)} r={isDef ? 5 : 4}
+                fill={isDef ? C.fault : '#64748b'} opacity={isDef ? 0.6 : 1} />
+              {isDef && <text x={nx(c)} y={ny(r) + 3} textAnchor="middle" fill="white" fontSize="6" fontWeight="bold">✕</text>}
+            </g>
+          );
+        }))}
+        {maxMeshRect && (
+          <text x={nx((maxMeshRect[0] + maxMeshRect[2]) / 2)} y={ny(maxMeshRect[3]) + g/2 + 10}
+            textAnchor="middle" fill={C.accent} fontSize="10" fontWeight="600">
+            max pure mesh: {maxMeshRect[2] - maxMeshRect[0] + 1}×{maxMeshRect[3] - maxMeshRect[1] + 1}
+          </text>
+        )}
+        <text x={w / 2} y={h - 4} textAnchor="middle" fill={borderColor} fontSize="10" fontWeight="600">{label}</text>
+      </svg>
+    );
+  }
+
+  const fewDefects = new Set(['6,2', '7,5']);
+  const manyDefects = new Set(['1,2', '3,1', '5,3', '2,5', '6,1', '4,4', '7,2', '0,6', '6,5', '3,6']);
+
+  return (
+    <Slide section="Motivation" sectionColor={C.warn} title="Resource Waste at Scale" subtitle="When defects are serious, the conventional approach limits us to a smaller topology — wasting resources.">
+      <div style={{ display: 'flex', gap: 24, alignItems: 'stretch' }}>
+        <div style={{ background: C.card, borderRadius: 14, padding: 14, border: `1px solid ${C.accent3}` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.accent3, textAlign: 'center', marginBottom: 6 }}>Few Defects</div>
+          <MeshDiagram cols={8} rows={7} defectSet={fewDefects} maxMeshRect={[0,0,5,6]} label="8×7 physical → 6×7 max pure mesh" borderColor={C.accent3} w={260} h={220} />
+          <div style={{ fontSize: 11, color: C.good, textAlign: 'center', marginTop: 6, fontWeight: 600 }}>✓ Nearly full size recovered</div>
+        </div>
+        <div style={{ background: C.card, borderRadius: 14, padding: 14, border: `1px solid ${C.fault}` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.fault, textAlign: 'center', marginBottom: 6 }}>Many Defects</div>
+          <MeshDiagram cols={8} rows={7} defectSet={manyDefects} maxMeshRect={[2,2,4,3]} label="8×7 physical → only 3×2 pure mesh" borderColor={C.fault} w={260} h={220} />
+          <div style={{ fontSize: 11, color: C.fault, textAlign: 'center', marginTop: 6, fontWeight: 600 }}>✗ Scattered defects → much smaller mesh</div>
+        </div>
+      </div>
+      <div style={{ padding: '10px 18px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${C.accent}`, marginTop: 12, maxWidth: 700, flexShrink: 0 }}>
+        <p style={{ fontSize: 13, color: C.dim, textAlign: 'center' }}>
+          <b style={{ color: C.accent }}>Our goal:</b> Remap a large regular topology onto the defective physical mesh, reusing redundant resources and defective-area components.
+        </p>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 8: WORKLOAD-AWARE ════════════ */
+function SlideWorkloadAware() {
+  return (
+    <Slide section="Motivation" sectionColor={C.warn} title="Workload-Aware Remapping" subtitle="Since different workloads have different resource demands, remapping should optimize accordingly.">
+      <div style={{ display: 'flex', gap: 24, alignItems: 'stretch' }}>
+        <div style={{ flex: 1, background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.accent}`, maxWidth: 320 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.accent, marginBottom: 12 }}>Compute-Bound (Prefill)</div>
+          <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, marginBottom: 12 }}>
+            GEMM-dominated. Needs dense core allocation with fast inter-core links for data reuse.
+          </div>
+          <div style={{ padding: '8px 12px', background: '#0f172a', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: C.accent, fontWeight: 600 }}>Remapping priority:</div>
+            <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Maximize compute density, minimize hop distance between mapped cores</div>
+          </div>
+        </div>
+        <div style={{ flex: 1, background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.accent2}`, maxWidth: 320 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.accent2, marginBottom: 12 }}>Memory-Bound (Decode)</div>
+          <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, marginBottom: 12 }}>
+            GEMV-dominated. Needs efficient memory access patterns and bandwidth utilization.
+          </div>
+          <div style={{ padding: '8px 12px', background: '#0f172a', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: C.accent2, fontWeight: 600 }}>Remapping priority:</div>
+            <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Optimize data flow paths, reduce memory access contention</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '12px 20px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${C.warn}`, marginTop: 16, maxWidth: 700, flexShrink: 0 }}>
+        <p style={{ fontSize: 13, color: C.dim, textAlign: 'center' }}>
+          <b style={{ color: C.warn }}>Key insight:</b> A single remapping strategy is not optimal for all workloads. The mapper should be <span style={{ color: C.warn, fontWeight: 600 }}>workload-aware</span>.
+        </p>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 9: PIPELINE OVERVIEW ════════════ */
+function SlidePipeline() {
+  const boxes = [
+    { label: 'Defective\nPhysical Mesh', color: C.fault, icon: '⊞' },
+    { label: 'Partition\nSubmeshes', color: C.warn, icon: '✂' },
+    { label: 'Frontier\nExpansion', color: C.accent3, icon: '◎' },
+    { label: 'Geometric\nScoring', color: C.accent2, icon: '∠' },
+    { label: 'Remapped\nMesh', color: C.accent, icon: '✓' },
+  ];
+  return (
+    <Slide section="Algorithm" sectionColor={C.accent3} title="Remapping Pipeline">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+        {boxes.map((b, i) => (
+          <React.Fragment key={i}>
+            <div style={{
+              width: 126, height: 100, display: 'flex', flexDirection: 'column',
+              justifyContent: 'center', alignItems: 'center', borderRadius: 14,
+              background: C.card, border: `2px solid ${b.color}`,
+              padding: 10, textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 24, marginBottom: 4 }}>{b.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: b.color, whiteSpace: 'pre-line' }}>{b.label}</div>
+            </div>
+            {i < boxes.length - 1 && (
+              <svg width={32} height={28} viewBox="0 0 60 40">
+                <polygon points="10,12 40,12 40,4 58,20 40,36 40,28 10,28" fill={C.border} />
+              </svg>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+      <div style={{ marginTop: 28, display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
+        <div style={{ padding: '10px 16px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${C.warn}` }}>
+          <span style={{ fontSize: 13, color: C.dim }}>
+            <b style={{ color: C.warn }}>Step 1:</b> Partition defective mesh into fault-free submeshes
+          </span>
+        </div>
+        <div style={{ padding: '10px 16px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${C.accent3}` }}>
+          <span style={{ fontSize: 13, color: C.dim }}>
+            <b style={{ color: C.accent3 }}>Step 2:</b> BFS ring-by-ring, map virtual → healthy physical
+          </span>
+        </div>
+        <div style={{ padding: '10px 16px', background: C.card, borderRadius: 10, borderLeft: `3px solid ${C.accent2}` }}>
+          <span style={{ fontSize: 13, color: C.dim }}>
+            <b style={{ color: C.accent2 }}>Step 3:</b> Score candidates by angle preservation
+          </span>
+        </div>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 10: RCB PARTITION ════════════ */
+function SlidePartition() {
+  // Show an 8x6 mesh with 3 faults, bisected into fault-free submeshes
+  const cols = 8, rows = 6, G = 32, P = 20;
+  const faults = new Set(['3,3','7,1','4,4']);
+  const svgW = cols * G + P * 2;
+  const svgH = rows * G + P * 2;
+  const gx = x => P + x * G + G / 2;
+  const gy = y => P + (rows - 1 - y) * G + G / 2;
+
+  // Final submeshes (colored regions) after RCB
+  const regions = [
+    { ll: [0,0], ur: [3,2], color: C.accent },
+    { ll: [0,3], ur: [1,5], color: C.accent2 },
+    { ll: [2,3], ur: [2,5], color: C.accent3 },
+    { ll: [3,4], ur: [3,5], color: '#f59e0b' },
+    { ll: [4,0], ur: [6,2], color: '#ec4899' },
+    { ll: [4,3], ur: [7,3], color: '#14b8a6' },
+    { ll: [4,5], ur: [7,5], color: '#f97316' },
+    { ll: [5,4], ur: [7,4], color: '#84cc16' },
+  ];
+
+  return (
+    <Slide section="Algorithm" sectionColor={C.accent3} title="Partition: Recursive Coordinate Bisection"
+      subtitle="Split defective mesh along longer axis. Repeat until each submesh is fault-free.">
+      <div style={{ display: 'flex', gap: 32, alignItems: 'center' }}>
+        {/* Before: full mesh with faults */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, textAlign: 'center', marginBottom: 6 }}>Before: defective mesh</div>
+          <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+            {Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
+              const e = [];
+              if (x < cols - 1) e.push(<line key={`h${x}${y}`} x1={gx(x)} y1={gy(y)} x2={gx(x+1)} y2={gy(y)} stroke="#334155" strokeWidth={1} />);
+              if (y < rows - 1) e.push(<line key={`v${x}${y}`} x1={gx(x)} y1={gy(y)} x2={gx(x)} y2={gy(y+1)} stroke="#334155" strokeWidth={1} />);
+              return e;
+            }))}
+            {Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
+              const f = faults.has(`${x},${y}`);
+              return (
+                <g key={`n${x}${y}`}>
+                  <circle cx={gx(x)} cy={gy(y)} r={f ? 7 : 5} fill={f ? C.fault : '#64748b'} opacity={f ? 0.7 : 1} />
+                  {f && <text x={gx(x)} y={gy(y) + 3} textAnchor="middle" fill="white" fontSize="7" fontWeight="bold">✕</text>}
+                </g>
+              );
+            }))}
+          </svg>
+        </div>
+
+        {/* Arrow */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <svg width={40} height={32} viewBox="0 0 60 40"><polygon points="10,12 40,12 40,4 58,20 40,36 40,28 10,28" fill={C.border} /></svg>
+          <span style={{ fontSize: 11, color: C.dim }}>RCB</span>
+        </div>
+
+        {/* After: colored submeshes */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.warn, textAlign: 'center', marginBottom: 6 }}>After: fault-free submeshes</div>
+          <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+            {/* Region highlights */}
+            {regions.map((r, i) => {
+              const rx = P + r.ll[0] * G + 2;
+              const ry = P + (rows - 1 - r.ur[1]) * G + 2;
+              const rw = (r.ur[0] - r.ll[0] + 1) * G - 4;
+              const rh = (r.ur[1] - r.ll[1] + 1) * G - 4;
+              return <rect key={i} x={rx} y={ry} width={rw} height={rh} rx={4}
+                fill={`${r.color}18`} stroke={r.color} strokeWidth={1.5} />;
+            })}
+            {/* Grid links */}
+            {Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
+              const e = [];
+              if (x < cols - 1) e.push(<line key={`h${x}${y}`} x1={gx(x)} y1={gy(y)} x2={gx(x+1)} y2={gy(y)} stroke="#334155" strokeWidth={1} />);
+              if (y < rows - 1) e.push(<line key={`v${x}${y}`} x1={gx(x)} y1={gy(y)} x2={gx(x)} y2={gy(y+1)} stroke="#334155" strokeWidth={1} />);
+              return e;
+            }))}
+            {/* Nodes — faults removed */}
+            {Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
+              const f = faults.has(`${x},${y}`);
+              if (f) return <g key={`n${x}${y}`}><circle cx={gx(x)} cy={gy(y)} r={5} fill={C.fault} opacity={0.3} /></g>;
+              // Find which region this node belongs to
+              const reg = regions.find(r => x >= r.ll[0] && x <= r.ur[0] && y >= r.ll[1] && y <= r.ur[1]);
+              return <circle key={`n${x}${y}`} cx={gx(x)} cy={gy(y)} r={5} fill={reg ? reg.color : '#475569'} opacity={reg ? 0.8 : 0.4} />;
+            }))}
+          </svg>
+        </div>
+      </div>
+      <p style={{ fontSize: 13, color: C.dim, marginTop: 10, textAlign: 'center', flexShrink: 0 }}>
+        Each colored region is a fault-free rectangular submesh. Faulty nodes are discarded.
+      </p>
+    </Slide>
+  );
+}
+
+/* ════════════ FRONTIER EXPANSION DATA ════════════ */
+const VSIZE = 5, PSIZE = 7;
+const pDefects = new Set(['3,3','5,2','1,5','6,4','4,6']);
+const isPDefect = (x, y) => pDefects.has(`${x},${y}`);
+
+const hardMap = new Map([
+  ['2,2', [3, 4]],
+  ['2,3', [3, 5]], ['1,2', [2, 4]], ['3,2', [4, 4]], ['2,1', [3, 2]],
+  ['1,3', [2, 5]], ['0,2', [1, 4]], ['1,1', [2, 3]], ['3,3', [4, 5]], ['4,2', [5, 4]], ['3,1', [4, 2]], ['2,0', [3, 1]], ['2,4', [2, 6]],
+  ['0,3', [1, 5]], ['0,1', [1, 3]], ['1,0', [2, 1]], ['4,3', [5, 5]], ['4,1', [5, 3]], ['3,0', [4, 1]], ['1,4', [1, 6]], ['3,4', [4, 6]],
+  ['0,4', [0, 6]], ['0,0', [1, 1]], ['4,4', [5, 6]], ['4,0', [5, 1]],
+]);
+
+function computeRings() {
+  const center = [2, 2];
+  const visited = new Set([`${center[0]},${center[1]}`]);
+  const result = [[center]];
+  let frontier = [center];
+  for (let ring = 1; ring <= 4; ring++) {
+    const nextRing = [];
+    for (const [fx, fy] of frontier) {
+      for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+        const nx = fx + dx, ny = fy + dy;
+        const key = `${nx},${ny}`;
+        if (nx >= 0 && nx < VSIZE && ny >= 0 && ny < VSIZE && !visited.has(key)) {
+          visited.add(key);
+          nextRing.push([nx, ny]);
+        }
+      }
+    }
+    if (nextRing.length > 0) result.push(nextRing);
+    frontier = nextRing;
+  }
+  return result;
+}
+const RINGS = computeRings();
+
+function classifyNodes(upToRing) {
+  const vState = {};
+  const pState = {};
+  for (let y = 0; y < VSIZE; y++)
+    for (let x = 0; x < VSIZE; x++)
+      vState[`${x},${y}`] = 'unmapped';
+  for (let y = 0; y < PSIZE; y++)
+    for (let x = 0; x < PSIZE; x++)
+      pState[`${x},${y}`] = isPDefect(x, y) ? 'defective' : 'available';
+
+  for (let r = 0; r <= upToRing && r < RINGS.length; r++) {
+    for (const [vx, vy] of RINGS[r]) {
+      vState[`${vx},${vy}`] = r === upToRing ? 'frontier' : 'mapped';
+      const pp = hardMap.get(`${vx},${vy}`);
+      if (pp) pState[`${pp[0]},${pp[1]}`] = r === upToRing ? 'frontier' : 'mapped';
+    }
+  }
+  if (upToRing < RINGS.length - 1) {
+    for (const [vx, vy] of RINGS[upToRing]) {
+      for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+        const nx = vx + dx, ny = vy + dy;
+        const key = `${nx},${ny}`;
+        if (nx >= 0 && nx < VSIZE && ny >= 0 && ny < VSIZE && vState[key] === 'unmapped')
+          vState[key] = 'candidate';
+      }
+    }
+  }
+  return { vState, pState };
+}
+
+/* ════════════ FRONTIER EXPANSION SLIDES ════════════ */
+function FrontierSlide({ ring, note }) {
+  const { vState, pState } = useMemo(() => classifyNodes(ring), [ring]);
+
+  const C1 = 38, C2 = 34, PAD = 24;
+  const svgW = VSIZE * C1 + PAD * 2;
+  const svgH = VSIZE * C1 + PAD * 2;
+  const pSvgW = PSIZE * C2 + PAD * 2;
+  const pSvgH = PSIZE * C2 + PAD * 2;
+  const vcx = x => PAD + x * C1 + C1 / 2;
+  const vcy = y => PAD + (VSIZE - 1 - y) * C1 + C1 / 2;
+  const pcx = x => PAD + x * C2 + C2 / 2;
+  const pcy = y => PAD + (PSIZE - 1 - y) * C2 + C2 / 2;
+
+  const vColor = { mapped: C.mapped, frontier: C.frontier, candidate: C.candidate, unmapped: C.unmapped };
+  const pColor = { mapped: C.mapped, frontier: C.frontier, defective: C.fault, available: '#334155' };
+
+  return (
+    <Slide section="Algorithm" sectionColor={C.accent3} title="Frontier Expansion">
+      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', transform: 'scale(0.82)', transformOrigin: 'top center' }}>
+        <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+          <div style={{ color: C.accent, fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Virtual Mesh (5×5)</div>
+          <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+            {Array.from({ length: VSIZE }, (_, y) =>
+              Array.from({ length: VSIZE }, (_, x) => {
+                const elems = [];
+                if (x < VSIZE - 1) elems.push(<line key={`vh${x}${y}`} x1={vcx(x)} y1={vcy(y)} x2={vcx(x+1)} y2={vcy(y)} stroke="#334155" strokeWidth={1.5} />);
+                if (y < VSIZE - 1) elems.push(<line key={`vv${x}${y}`} x1={vcx(x)} y1={vcy(y)} x2={vcx(x)} y2={vcy(y+1)} stroke="#334155" strokeWidth={1.5} />);
+                return elems;
+              })
+            )}
+            {Array.from({ length: VSIZE }, (_, y) =>
+              Array.from({ length: VSIZE }, (_, x) => {
+                const s = vState[`${x},${y}`];
+                const fill = vColor[s];
+                return (
+                  <g key={`vn${x}${y}`}>
+                    <circle cx={vcx(x)} cy={vcy(y)} r={s === 'frontier' ? 10 : s === 'candidate' ? 8 : 7}
+                      fill={s === 'unmapped' || s === 'candidate' ? 'transparent' : fill}
+                      stroke={fill} strokeWidth={s === 'frontier' ? 3 : s === 'candidate' ? 2 : 1.5}
+                      strokeDasharray={s === 'candidate' ? '3 2' : 'none'} />
+                    <text x={vcx(x)} y={vcy(y) + 4} textAnchor="middle" fill={s === 'unmapped' ? C.dim : 'white'}
+                      fontSize="9" fontWeight={s === 'frontier' ? 'bold' : 'normal'}>{`${x},${y}`}</text>
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+        <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+          <div style={{ color: C.accent3, fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Physical Mesh (7×7, with defects)</div>
+          <svg width={pSvgW} height={pSvgH} viewBox={`0 0 ${pSvgW} ${pSvgH}`}>
+            {Array.from({ length: PSIZE }, (_, y) =>
+              Array.from({ length: PSIZE }, (_, x) => {
+                const elems = [];
+                const selfDef = isPDefect(x, y);
+                if (x < PSIZE - 1) {
+                  const nDef = isPDefect(x+1, y);
+                  elems.push(<line key={`ph${x}${y}`} x1={pcx(x)} y1={pcy(y)} x2={pcx(x+1)} y2={pcy(y)}
+                    stroke={(selfDef || nDef) ? 'rgba(239,68,68,0.2)' : '#334155'} strokeWidth={1.5}
+                    strokeDasharray={(selfDef || nDef) ? '3 3' : 'none'} />);
+                }
+                if (y < PSIZE - 1) {
+                  const nDef = isPDefect(x, y+1);
+                  elems.push(<line key={`pv${x}${y}`} x1={pcx(x)} y1={pcy(y)} x2={pcx(x)} y2={pcy(y+1)}
+                    stroke={(selfDef || nDef) ? 'rgba(239,68,68,0.2)' : '#334155'} strokeWidth={1.5}
+                    strokeDasharray={(selfDef || nDef) ? '3 3' : 'none'} />);
+                }
+                return elems;
+              })
+            )}
+            {Array.from({ length: PSIZE }, (_, y) =>
+              Array.from({ length: PSIZE }, (_, x) => {
+                const ps = pState[`${x},${y}`];
+                const isDef = ps === 'defective';
+                const isMapped = ps === 'mapped' || ps === 'frontier';
+                const fill = pColor[ps] || '#334155';
+                return (
+                  <g key={`pn${x}${y}`}>
+                    <circle cx={pcx(x)} cy={pcy(y)} r={isDef ? 8 : isMapped ? (ps === 'frontier' ? 10 : 7) : 4}
+                      fill={isDef ? C.fault : isMapped ? fill : 'transparent'}
+                      stroke={isDef ? '#fca5a5' : isMapped ? fill : '#475569'}
+                      strokeWidth={isDef ? 2 : ps === 'frontier' ? 3 : 1.5}
+                      opacity={isDef ? 0.7 : 1} />
+                    {isDef && <text x={pcx(x)} y={pcy(y) + 4} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">✕</text>}
+                    {isMapped && <text x={pcx(x)} y={pcy(y) + 4} textAnchor="middle" fill="white" fontSize="7">{`${x},${y}`}</text>}
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 20, marginTop: 8, flexShrink: 0 }}>
+        {[['Mapped', C.mapped, false], ['Frontier', C.frontier, false], ['Candidate', C.candidate, true], ['Defective', C.fault, false]].map(([label, color, dashed]) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <svg width={18} height={18}><circle cx={9} cy={9} r={6} fill={dashed ? 'transparent' : color}
+              stroke={color} strokeWidth={2} strokeDasharray={dashed ? '3 2' : 'none'} /></svg>
+            <span style={{ fontSize: 12, color: C.dim }}>{label}</span>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 13, color: C.dim, marginTop: 6, textAlign: 'center', flexShrink: 0 }}>{note}</p>
+    </Slide>
+  );
+}
+
+/* ════════════ GEOMETRIC SCORING SLIDES ════════════ */
+function ScoringSlide({ phase }) {
+  const G = 75;
+  const vB = [140, 220], vD = [vB[0], vB[1] - G], vA = [vB[0] + G, vB[1]];
+  const pB = [370, 200], pD = [pB[0], pB[1] - G];
+  const pA_good = [pB[0] + G, pB[1]];
+  const pA_bad = [pB[0], pB[1] + G];
+  const svgW = 660, svgH = 380;
+
+  return (
+    <Slide section="Algorithm" sectionColor={C.accent3} title="Geometric Scoring" subtitle={
+      phase === 0 ? 'B and D are already mapped. A is the next virtual node to map. Angle D-B-A = 90° in virtual space.' :
+      phase === 1 ? 'Two candidates for A in physical space. Which preserves the 90° angle?' :
+      'Candidate 1 preserves the angle (90° → 90°). Candidate 2 distorts it (90° → 180°). Pick Candidate 1.'
+    }>
+      <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}` }}>
+        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+          <line x1={300} y1={20} x2={300} y2={380} stroke={C.border} strokeWidth={1} strokeDasharray="4 4" />
+          <text x={150} y={30} textAnchor="middle" fill={C.accent} fontSize="15" fontWeight="bold">Virtual Mesh</text>
+          <line x1={vB[0]} y1={vB[1]} x2={vD[0]} y2={vD[1]} stroke="#64748b" strokeWidth={2.5} />
+          <GridNode x={vD[0]} y={vD[1]} r={11} fill={C.mapped} label="D (mapped)" labelColor={C.mapped} />
+          <GridNode x={vB[0]} y={vB[1]} r={13} fill={C.mapped} label="B (mapped)" labelColor={C.mapped} />
+          {phase >= 0 && <>
+            <line x1={vB[0]} y1={vB[1]} x2={vA[0]} y2={vA[1]} stroke={C.frontier} strokeWidth={2.5} />
+            <GridNode x={vA[0]} y={vA[1]} r={11} fill={C.frontier} label="A (to map)" labelColor={C.frontier} />
+            <AngleArc cx={vB[0]} cy={vB[1]} r={24} startAngle={0} endAngle={90} color={C.accent2} label="90°" labelR={42} />
+          </>}
+          <text x={470} y={30} textAnchor="middle" fill={C.accent3} fontSize="15" fontWeight="bold">Physical Mesh</text>
+          <line x1={pB[0]} y1={pB[1]} x2={pD[0]} y2={pD[1]} stroke="#64748b" strokeWidth={2.5} />
+          <GridNode x={pD[0]} y={pD[1]} r={11} fill={C.mapped} label="D'" labelColor={C.mapped} />
+          <GridNode x={pB[0]} y={pB[1]} r={13} fill={C.mapped} label="B'" labelColor={C.mapped} />
+          {phase >= 1 && <>
+            <line x1={pB[0]} y1={pB[1]} x2={pA_good[0]} y2={pA_good[1]} stroke={C.good} strokeWidth={2.5} />
+            <GridNode x={pA_good[0]} y={pA_good[1]} r={11} fill={C.good} />
+            <AngleArc cx={pB[0]} cy={pB[1]} r={24} startAngle={0} endAngle={90} color={C.good} label="90°" labelR={42} />
+            {phase < 2 && <text x={pA_good[0] + 16} y={pA_good[1] - 10} fill={C.good} fontSize="12" fontWeight="bold">Candidate 1</text>}
+            <line x1={pB[0]} y1={pB[1]} x2={pA_bad[0]} y2={pA_bad[1]} stroke={C.bad} strokeWidth={2.5} strokeDasharray="5 3" />
+            <GridNode x={pA_bad[0]} y={pA_bad[1]} r={11} fill={C.bad} />
+            <AngleArc cx={pB[0]} cy={pB[1]} r={30} startAngle={-90} endAngle={90} color={C.bad} label="180°" labelR={48} />
+            {phase < 2 && <text x={pA_bad[0] + 16} y={pA_bad[1] + 5} fill={C.bad} fontSize="12" fontWeight="bold">Candidate 2</text>}
+          </>}
+          {phase >= 2 && <>
+            <rect x={pA_good[0] + 18} y={pA_good[1] - 30} width={148} height={46} rx={6}
+              fill="rgba(52,211,153,0.12)" stroke={C.good} strokeWidth={1.5} />
+            <text x={pA_good[0] + 92} y={pA_good[1] - 10} textAnchor="middle" fill={C.good} fontSize="12" fontWeight="bold">90° → 90° preserved</text>
+            <text x={pA_good[0] + 92} y={pA_good[1] + 8} textAnchor="middle" fill={C.good} fontSize="12">low cost ✓</text>
+            <text x={pA_good[0]} y={pA_good[1] - 2} textAnchor="middle" fill={C.good} fontSize="18">✓</text>
+            <rect x={pA_bad[0] + 18} y={pA_bad[1] - 8} width={156} height={46} rx={6}
+              fill="rgba(248,113,113,0.12)" stroke={C.bad} strokeWidth={1.5} />
+            <text x={pA_bad[0] + 96} y={pA_bad[1] + 12} textAnchor="middle" fill={C.bad} fontSize="12" fontWeight="bold">90° → 180° distorted</text>
+            <text x={pA_bad[0] + 96} y={pA_bad[1] + 30} textAnchor="middle" fill={C.bad} fontSize="12">high cost ✗</text>
+            <text x={pA_bad[0]} y={pA_bad[1] - 2} textAnchor="middle" fill={C.bad} fontSize="18">✗</text>
+          </>}
+        </svg>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ SLIDE 16: SUMMARY ════════════ */
+function SlideSummary() {
+  return (
+    <Slide>
+      <div style={{ textAlign: 'center' }}>
+        <h1 style={{ fontSize: 44, fontWeight: 800, color: C.text, marginBottom: 24 }}>Summary</h1>
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 32, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Background', items: ['AI workloads: compute vs. memory bound', 'Hardware defect tolerance via redundancy', 'Yield problem at wafer scale'], color: C.accent },
+            { label: 'Motivation', items: ['Hidden redundancy wastes resources', 'Mesh remap is harder than Clos', 'Need workload-aware remapping'], color: C.warn },
+            { label: 'Algorithm', items: ['Partition into fault-free submeshes', 'Frontier expansion (BFS mapping)', 'Geometric scoring (angle preservation)'], color: C.accent3 },
+          ].map(col => (
+            <div key={col.label} style={{ width: 240, padding: 18, background: C.card, borderRadius: 14, border: `2px solid ${col.color}`, textAlign: 'left' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: col.color, marginBottom: 10, textAlign: 'center' }}>{col.label}</div>
+              {col.items.map((item, i) => (
+                <div key={i} style={{ fontSize: 12, color: C.dim, marginBottom: 4, paddingLeft: 12, position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 0, color: col.color }}>•</span> {item}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ width: 120, height: 3, background: C.accent, margin: '0 auto 24px', borderRadius: 2 }} />
+        <p style={{ fontSize: 24, color: C.dim }}>Questions?</p>
+      </div>
+    </Slide>
+  );
+}
+
+/* ════════════ MAIN APP ════════════ */
+function App() {
+  const [slide, setSlide] = useState(0);
+
+  const slides = useMemo(() => [
+    <SlideTitle key={0} />,
+    /* Background */
+    <SlideWorkload key={1} />,
+    <SlideDefectTolerance key={2} />,
+    <SlideYield key={3} />,
+    /* Motivation */
+    <SlideHiddenRedundancy key={4} />,
+    <SlideTopology key={5} />,
+    <SlideResourceWaste key={6} />,
+    <SlideWorkloadAware key={7} />,
+    /* Algorithm */
+    <SlidePipeline key={8} />,
+    <SlidePartition key={9} />,
+    <FrontierSlide key={10} ring={0} note="Anchor: v(2,2) → p(3,4). Node (3,3) is defective — skipped." />,
+    <FrontierSlide key={11} ring={2} note="BFS expands ring by ring, skipping defective physical nodes." />,
+    <FrontierSlide key={12} ring={4} note="All 25 virtual nodes mapped. Frontier expansion complete!" />,
+    <ScoringSlide key={13} phase={0} />,
+    <ScoringSlide key={14} phase={1} />,
+    <ScoringSlide key={15} phase={2} />,
+    /* Closing */
+    <SlideSummary key={16} />,
+  ], []);
+
+  const total = slides.length;
+
+  const go = useCallback((dir) => {
+    setSlide(s => Math.max(0, Math.min(total - 1, s + dir)));
+  }, [total]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); go(1); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [go]);
+
+  const navBtn = {
+    background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: '8px 20px', color: C.dim, cursor: 'pointer', fontSize: 15, fontWeight: 600,
+  };
+
+  return (
+    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative' }}>
+      {slides[slide]}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, zIndex: 100,
+        padding: '12px 0 16px', background: 'linear-gradient(transparent, rgba(15,23,42,0.95) 30%)',
+      }}>
+        <button onClick={() => go(-1)} disabled={slide === 0} style={{ ...navBtn, opacity: slide === 0 ? 0.3 : 1 }}>← Prev</button>
+        <span style={{ color: C.dim, fontSize: 14, minWidth: 60, textAlign: 'center' }}>{slide + 1} / {total}</span>
+        <button onClick={() => go(1)} disabled={slide === total - 1} style={{ ...navBtn, opacity: slide === total - 1 ? 0.3 : 1 }}>Next →</button>
+      </div>
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 3, background: C.border, zIndex: 100 }}>
+        <div style={{ height: 3, background: C.accent, width: `${((slide + 1) / total) * 100}%`, transition: 'width 0.3s ease' }} />
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

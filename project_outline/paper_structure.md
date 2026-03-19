@@ -13,6 +13,7 @@ Hook → Problem → Insight → Contributions → Results snapshot.
 - **Current mitigations and their costs:**
   - Hardware redundancy (spare cores/links): fixed at design time, wastes area/power, and may be insufficient at high defect rates (e.g., Cerebras WSE reserves ~1–7% spare cores).
   - Software discard (use largest defect-free sub-mesh): abandons usable-but-irregular silicon.
+- **Industrial evidence of the need:** Cerebras confirms software-level remapping to restore regular mesh \cite{cerebras2025sigops}, and a Cerebras co-authored paper states "a proprietary process will route around [defects]" \cite{luczynski2024reduce} — but the algorithm is undisclosed. Defect-tolerant remapping is industrially critical yet remains an open problem in the literature.
 - **The gap:** High-performance kernels (GEMM, GEMV) require regular topology, but no existing approach efficiently remaps an irregular/faulty physical mesh into a virtual regular one at scale with deadlock-free routing guarantees.
 - **Our insight:** Decouple virtual topology from physical topology via a *model-defined remapper* — applications see a regular mesh while the remapper transparently maps it onto all healthy resources in a defective physical substrate.
 - **Contributions** (4 bullets, one sentence each):
@@ -50,14 +51,63 @@ Hook → Problem → Insight → Contributions → Results snapshot.
   - The remapping problem (embedding a virtual regular mesh into a faulty physical mesh) is NP-hard (reduces from subgraph isomorphism).
   - No prior work addresses remapping at large scale (>128 nodes) with workload awareness and deadlock-free routing.
 
-### 2.4 Limitations of Current Approaches
+### 2.4 Industry Practice: Spare Cores and Yield Binning
+Modern chips universally over-provision and disable defective units. Concrete examples:
+
+**GPUs (SM/CU harvesting — yield binning to lower SKUs):**
+| Die | Full Die | Top SKU (enabled) | Disabled | Source |
+|-----|----------|-------------------|----------|--------|
+| NVIDIA GA102 | 84 SMs | RTX 3090: 82 SMs | 2 (2.4%) | NVIDIA Ampere Whitepaper |
+| NVIDIA AD102 | 144 SMs | RTX 4090: 128 SMs | 16 (11%) | TechPowerUp |
+| NVIDIA GH100 | 144 SMs | H100 SXM: 132 SMs | 12 (8.3%) | NVIDIA Hopper Architecture |
+| AMD Navi 31 | 96 CUs | RX 7900 XTX: 96 CUs; 7900 XT: 84 CUs | 0–12 | Tom's Hardware |
+
+**CPUs (core harvesting):**
+| Die | Full Die | Harvested SKU | Disabled | Source |
+|-----|----------|---------------|----------|--------|
+| AMD Zen 3 CCD | 8 cores | Ryzen 5 5600X: 6 cores | 2 (25%) | AnandTech |
+| Intel Sapphire Rapids tile | ~15 cores | Xeon: 14 cores | 1 (~7%) | WikiChip |
+
+**Accelerators (spare cores with routing):**
+| Product | Physical | Enabled | Spare | Source |
+|---------|----------|---------|-------|--------|
+| Cerebras WSE-1 | ~406K cores | 400K | ~1.5% | Cerebras blog |
+| Tesla Dojo D1 | 360 cores | 354 | 6 (1.7%) | Hot Chips 34 |
+
+**Two strategies emerge:**
+1. **Discard/bin** (GPUs, CPUs): over-provision, fuse off defects, sell as lower SKU. No topology change — the remaining units are independent (GPU SMs) or connected via crossbar, so disabling units doesn't create an irregular topology.
+2. **Spare + remap** (Cerebras, Dojo): small spare pool (~1–2%), reconfigure routing to bypass faults. Required because cores are mesh-connected — disabling a core creates a hole in the topology.
+
+**Key observation:** Discard/bin works when units are independent or crossbar-connected (GPUs, CPUs). It fails for **mesh-connected** architectures where a disabled interior node creates an irregular topology that breaks dimension-order routing.
+
+### 2.5 Limitations of Current Approaches
 | Approach | Mechanism | Limitation |
 |----------|-----------|------------|
-| Hardware redundancy (AMD MI300, Cerebras WSE) | Spare cores/links swapped in at manufacturing/boot | Fixed overhead; diagonal links wasted when only regular mesh exposed |
+| Yield binning (NVIDIA, AMD, Intel) | Over-provision, fuse off defective SMs/CUs/cores, sell as lower SKU | Only works for independent/crossbar-connected units; not applicable to mesh-connected architectures |
+| Spare cores + proprietary remap (Cerebras WSE) | ~1.5% spare cores; undisclosed algorithm routes around defects \cite{luczynski2024reduce, cerebras2025sigops} | Algorithm not published; cannot be reproduced, analyzed, or extended by the community |
 | Software discard | Use largest defect-free rectangular sub-mesh | Abandons healthy-but-irregular silicon; utilization drops sharply at higher defect rates |
 | Topology reconfiguration (Zhang et al.) | Remap virtual mesh onto faulty physical mesh | Small scale (<128), no workload awareness, no routing guarantee |
 
-### 2.5 Our Goal
+### 2.5 Quantifying the Cost of Discard
+
+> **TODO: Derive a model for the expected largest defect-free k×k sub-mesh in an N×N grid given i.i.d. defect probability p.**
+>
+> Goal: show a curve of **max defect-free mesh size vs. defect rate** (e.g., for N=512).
+> - At p=1%, largest defect-free sub-mesh ≈ ?×?
+> - At p=5%, ≈ ?×?
+> - At p=10%, ≈ ?×?
+>
+> Expected result: the largest defect-free rectangle shrinks rapidly with p, meaning the discard approach wastes most of the healthy silicon even at moderate defect rates.
+>
+> This replaces the vague "utilization drops sharply" claim in §2.4 with a concrete, quantitative argument. Should include:
+> 1. Analytical model or probabilistic bound (related to geometric distribution / longest run in 2D)
+> 2. Monte Carlo validation (generate random defect maps, measure largest defect-free rectangle)
+> 3. A figure: x-axis = defect rate, y-axis = max sub-mesh size / total mesh size (utilization)
+> 4. Compare: utilization under discard vs. utilization under remapping (our approach uses ALL healthy nodes)
+>
+> This is the **quantitative motivation** for the entire paper — make the gap between discard and remapping visually obvious.
+
+### 2.6 Our Goal
 Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh — preserving the regular programming model while maximizing utilization, optimizing for the target workload, and guaranteeing deadlock-free routing.
 
 ---
@@ -130,6 +180,15 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
   - **No re-ascent allowed** → the hierarchical ordering imposes a total order on channel usage → acyclic CDG → deadlock freedom.
 - **Broadcast storm prevention:** deterministic, non-duplicating forwarding — each message follows exactly one path.
 - Works for both 4-connected (standard mesh) and 8-connected (diagonal mesh) topologies.
+- **Hardware requirement: ≥2 virtual channels (VCs).** The submesh hierarchy routing uses separate VCs for ascending and descending phases to guarantee deadlock freedom. This is a conservative assumption — modern architectures with true (general-purpose, reassignable) VCs provide far more:
+  - Cerebras WSE: **24 colors** — true VCs, any color can carry any data, non-blocking, time-multiplexed on same physical link \cite{cerebras2024sdk}
+  - Google TPU ICI: **≥2 VCs** for dateline-based deadlock-free torus routing
+  - Cray T3D/T3E, IBM Blue Gene/L: **2 VCs** — the historical minimum for deadlock-free torus routing
+  - Note: Intel mesh (AD/AK/BL/IV rings) and ARM CHI (REQ/RSP/SNP/DAT) use protocol-level virtual *networks*, not true VCs — each network is dedicated to a specific message class and cannot be reassigned for routing. These are not applicable to our argument.
+  - Li et al. (ISCA 2024) prove that all practical coherence protocols require ≥2 virtual networks for deadlock freedom \cite{li2024minvn}.
+  - AMD Infinity Fabric: proprietary, VC count undisclosed (likely ≥2 but unconfirmed). NVIDIA GPU: uses crossbar internally, not mesh — VCs not applicable.
+  - **Adversary case (address proactively in paper):** Real VC-free mesh products exist — Kalray MPPA-256 (turn-model, single die), Tilera TILE-Gx (5 physical nets, single die), Adapteva Epiphany (3 physical nets, multi-chip extensible), SpiNNaker (packet-dropping, 1M cores). But: single-die products discard the entire die on interior defects. Adapteva designed a multi-chip extensible mesh without VCs but **never solved** the hole-in-mesh problem when a chip dies. SpiNNaker tolerates packet loss (unacceptable for deterministic compute). The only products that handle interior defects in multi-die meshes losslessly (Cerebras 24 VCs, TPU ≥2 VCs) all use virtual channels. **≥2 VCs is the inherent cost of remapping over waste.**
+  - See `reference/Virtual_Channels_in_Modern_Hardware.md` for full details and citations.
 
 ---
 

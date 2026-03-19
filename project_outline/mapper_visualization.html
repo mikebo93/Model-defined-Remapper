@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mapper Module Visualization</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  #root { max-width: 1200px; margin: 0 auto; padding: 24px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+/* ───────────────── shared constants ───────────────── */
+const PAD = 40;
+const colors = {
+  bg: '#1e293b', card: '#334155', border: '#475569',
+  accent: '#38bdf8', accent2: '#a78bfa', accent3: '#34d399',
+  fault: '#ef4444', mapped: '#38bdf8', frontier: '#facc15',
+  candidate: '#a78bfa', unmapped: '#475569', text: '#e2e8f0',
+  dim: '#94a3b8', good: '#34d399', bad: '#f87171',
+};
+
+/* ───────────── helper: grid SVG node ──────────────── */
+function GridNode({ x, y, r = 8, fill, stroke, strokeWidth = 2, label, labelColor }) {
+  return (
+    <g>
+      <circle cx={x} cy={y} r={r} fill={fill} stroke={stroke || fill} strokeWidth={strokeWidth} />
+      {label && <text x={x} y={y + r + 14} textAnchor="middle" fill={labelColor || colors.dim} fontSize="10">{label}</text>}
+    </g>
+  );
+}
+
+function Arrow({ x1, y1, x2, y2, color, dashed, strokeWidth = 1.5 }) {
+  const id = `ah-${x1}-${y1}-${x2}-${y2}`;
+  return (
+    <g>
+      <defs>
+        <marker id={id} markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill={color} />
+        </marker>
+      </defs>
+      <line x1={x1} y1={y1} x2={x2} y2={y2}
+        stroke={color} strokeWidth={strokeWidth}
+        strokeDasharray={dashed ? '4 3' : 'none'}
+        markerEnd={`url(#${id})`} />
+    </g>
+  );
+}
+
+/* ════════════════ STAGE 1: FRONTIER EXPANSION ════════════════ */
+
+function Stage2() {
+  const VSIZE = 5; // 5x5 virtual mesh
+  const PSIZE = 7; // 7x7 physical mesh (larger, with defects)
+  const [step, setStep] = useState(0);
+
+  // Defective physical nodes (not mappable)
+  const pDefects = useMemo(() => new Set(['3,3','5,2','1,5','6,4','4,6']), []);
+  const isPDefect = (x, y) => pDefects.has(`${x},${y}`);
+
+  // Pre-computed mapping: virtual (x,y) → physical (px,py)
+  // Physical center = (3,3) is defective, so anchor at (3,4) instead
+  // The mapper must skip defective nodes, so the mapping isn't a simple offset
+  const vToP = useMemo(() => {
+    // BFS on virtual from center, greedily assign to nearest healthy physical node
+    const map = new Map();
+    const usedP = new Set();
+    // Anchor: v(2,2) → p(3,4)
+    map.set('2,2', [3, 4]);
+    usedP.add('3,4');
+
+    // Pre-baked mapping that avoids defective nodes and shows the skipping effect
+    const assignments = [
+      // Ring 1
+      ['2,3', [3, 5]], ['1,2', [2, 4]], ['3,2', [4, 4]], ['2,1', [3, 3 + 1 - 1]], // 3,3 is defective → use 3,3? No, skip
+    ];
+    // Actually let me just hardcode a sensible mapping
+    const hardMap = [
+      ['2,2', [3, 4]],  // anchor
+      // Ring 1
+      ['2,3', [3, 5]], ['1,2', [2, 4]], ['3,2', [4, 4]], ['2,1', [3, 2]],
+      // Ring 2
+      ['1,3', [2, 5]], ['0,2', [1, 4]], ['1,1', [2, 3]], ['3,3', [4, 5]], ['4,2', [5, 4]], ['3,1', [4, 2]], ['2,0', [3, 1]], ['2,4', [2, 6]],
+      // Ring 3
+      ['0,3', [1, 5]], ['0,1', [1, 3]], ['1,0', [2, 1]], ['4,3', [5, 5]], ['4,1', [5, 3]], ['3,0', [4, 1]], ['1,4', [1, 6]], ['3,4', [4, 6]],
+      // Ring 4
+      ['0,4', [0, 6]], ['0,0', [1, 1]], ['4,4', [5, 6]], ['4,0', [5, 1]],
+    ];
+    const m = new Map();
+    for (const [vk, pp] of hardMap) m.set(vk, pp);
+    return m;
+  }, []);
+
+  // BFS rings from center (2,2)
+  const rings = useMemo(() => {
+    const center = [2, 2];
+    const visited = new Set();
+    visited.add(`${center[0]},${center[1]}`);
+    const result = [[center]];
+    let frontier = [center];
+    for (let ring = 1; ring <= 4; ring++) {
+      const nextRing = [];
+      for (const [fx, fy] of frontier) {
+        for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+          const nx = fx + dx, ny = fy + dy;
+          const key = `${nx},${ny}`;
+          if (nx >= 0 && nx < VSIZE && ny >= 0 && ny < VSIZE && !visited.has(key)) {
+            visited.add(key);
+            nextRing.push([nx, ny]);
+          }
+        }
+      }
+      if (nextRing.length > 0) result.push(nextRing);
+      frontier = nextRing;
+    }
+    return result;
+  }, []);
+
+  const maxStep = rings.length - 1;
+  const currentStep = Math.min(step, maxStep);
+
+  // Classify virtual nodes
+  const nodeState = useMemo(() => {
+    const state = {};
+    for (let y = 0; y < VSIZE; y++)
+      for (let x = 0; x < VSIZE; x++)
+        state[`${x},${y}`] = 'unmapped';
+
+    for (let r = 0; r <= currentStep; r++) {
+      for (const [x, y] of rings[r]) {
+        state[`${x},${y}`] = r === currentStep ? 'frontier' : 'mapped';
+      }
+    }
+    if (currentStep < maxStep) {
+      for (const [x, y] of rings[currentStep]) {
+        for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+          const nx = x + dx, ny = y + dy;
+          const key = `${nx},${ny}`;
+          if (nx >= 0 && nx < VSIZE && ny >= 0 && ny < VSIZE && state[key] === 'unmapped') {
+            state[key] = 'candidate';
+          }
+        }
+      }
+    }
+    return state;
+  }, [currentStep, rings, maxStep]);
+
+  // Classify physical nodes: which are mapped, which are defective, which are available
+  const pNodeState = useMemo(() => {
+    const state = {};
+    for (let y = 0; y < PSIZE; y++)
+      for (let x = 0; x < PSIZE; x++)
+        state[`${x},${y}`] = isPDefect(x, y) ? 'defective' : 'available';
+
+    // Mark physical nodes that are mapped
+    for (let r = 0; r <= currentStep; r++) {
+      for (const [vx, vy] of rings[r]) {
+        const pp = vToP.get(`${vx},${vy}`);
+        if (pp) {
+          const pk = `${pp[0]},${pp[1]}`;
+          state[pk] = r === currentStep ? 'frontier' : 'mapped';
+        }
+      }
+    }
+    return state;
+  }, [currentStep, rings, vToP]);
+
+  const stateColor = {
+    mapped: colors.mapped,
+    frontier: colors.frontier,
+    candidate: colors.candidate,
+    unmapped: colors.unmapped,
+  };
+
+  const pStateColor = {
+    mapped: colors.mapped,
+    frontier: colors.frontier,
+    defective: colors.fault,
+    available: '#334155',
+  };
+
+  const C1 = 48; // smaller cells to fit side-by-side
+  const C2 = 44; // even smaller for the 7x7 grid
+  const svgW = VSIZE * C1 + PAD * 2;
+  const svgH = VSIZE * C1 + PAD * 2;
+  const pSvgW = PSIZE * C2 + PAD * 2;
+  const pSvgH = PSIZE * C2 + PAD * 2;
+
+  function vcx(x) { return PAD + x * C1 + C1 / 2; }
+  function vcy(y) { return PAD + (VSIZE - 1 - y) * C1 + C1 / 2; }
+  function pcx(x) { return PAD + x * C2 + C2 / 2; }
+  function pcy(y) { return PAD + (PSIZE - 1 - y) * C2 + C2 / 2; }
+
+  const notes = [
+    'Anchor: map virtual center (2,2) → healthy physical node (3,4). Note: (3,3) is defective, so we skip it.',
+    'Ring 1: map 4 immediate neighbours of anchor onto nearby healthy physical nodes.',
+    'Ring 2: expand frontier outward — each virtual node maps to a healthy physical neighbour, skipping defects.',
+    'Ring 3: corners being reached. The mapper navigates around defective nodes.',
+    'Ring 4: all virtual nodes mapped onto healthy physical nodes! Frontier expansion complete.',
+  ];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+        <button onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0} style={btnStyle}>← Prev</button>
+        <span style={{ color: colors.dim, fontSize: 14 }}>Ring {currentStep} / {maxStep}</span>
+        <button onClick={() => setStep(Math.min(maxStep, step + 1))} disabled={step >= maxStep} style={btnStyle}>Next →</button>
+        <button onClick={() => setStep(0)} style={{ ...btnStyle, marginLeft: 'auto' }}>Reset</button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        {/* Virtual mesh */}
+        <div style={{ background: colors.bg, borderRadius: 12, padding: 16, border: `1px solid ${colors.border}`, flexShrink: 0 }}>
+          <div style={{ color: colors.accent, fontWeight: 700, marginBottom: 8, fontSize: 15 }}>Virtual Mesh (5x5)</div>
+          <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+            {/* Links */}
+            {Array.from({ length: VSIZE }, (_, y) =>
+              Array.from({ length: VSIZE }, (_, x) => {
+                const elems = [];
+                if (x < VSIZE - 1)
+                  elems.push(<line key={`vh-${x}-${y}`} x1={vcx(x)} y1={vcy(y)} x2={vcx(x+1)} y2={vcy(y)} stroke="#334155" strokeWidth={1.5} />);
+                if (y < VSIZE - 1)
+                  elems.push(<line key={`vv-${x}-${y}`} x1={vcx(x)} y1={vcy(y)} x2={vcx(x)} y2={vcy(y+1)} stroke="#334155" strokeWidth={1.5} />);
+                return elems;
+              })
+            )}
+            {/* Nodes */}
+            {Array.from({ length: VSIZE }, (_, y) =>
+              Array.from({ length: VSIZE }, (_, x) => {
+                const s = nodeState[`${x},${y}`];
+                const fill = stateColor[s];
+                return (
+                  <g key={`vn-${x}-${y}`}>
+                    <circle cx={vcx(x)} cy={vcy(y)} r={s === 'frontier' ? 11 : s === 'candidate' ? 9 : 7}
+                      fill={s === 'unmapped' || s === 'candidate' ? 'transparent' : fill}
+                      stroke={fill} strokeWidth={s === 'frontier' ? 3 : s === 'candidate' ? 2 : 1.5}
+                      strokeDasharray={s === 'candidate' ? '3 2' : 'none'} />
+                    <text x={vcx(x)} y={vcy(y) + 4} textAnchor="middle" fill={s === 'unmapped' ? colors.dim : 'white'}
+                      fontSize="9" fontWeight={s === 'frontier' ? 'bold' : 'normal'}>
+                      {`${x},${y}`}
+                    </text>
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+
+        {/* Physical mesh (defective) */}
+        <div style={{ background: colors.bg, borderRadius: 12, padding: 16, border: `1px solid ${colors.border}`, flexShrink: 0 }}>
+          <div style={{ color: colors.accent3, fontWeight: 700, marginBottom: 8, fontSize: 15 }}>Physical Mesh (7x7, with defects)</div>
+          <svg width={pSvgW} height={pSvgH} viewBox={`0 0 ${pSvgW} ${pSvgH}`}>
+            {/* All physical grid links */}
+            {Array.from({ length: PSIZE }, (_, y) =>
+              Array.from({ length: PSIZE }, (_, x) => {
+                const elems = [];
+                const selfDef = isPDefect(x, y);
+                // Horizontal link
+                if (x < PSIZE - 1) {
+                  const nbrDef = isPDefect(x+1, y);
+                  const broken = selfDef || nbrDef;
+                  elems.push(
+                    <line key={`ph-${x}-${y}`} x1={pcx(x)} y1={pcy(y)} x2={pcx(x+1)} y2={pcy(y)}
+                      stroke={broken ? 'rgba(239,68,68,0.2)' : '#334155'} strokeWidth={1.5}
+                      strokeDasharray={broken ? '3 3' : 'none'} />
+                  );
+                }
+                // Vertical link
+                if (y < PSIZE - 1) {
+                  const nbrDef = isPDefect(x, y+1);
+                  const broken = selfDef || nbrDef;
+                  elems.push(
+                    <line key={`pv-${x}-${y}`} x1={pcx(x)} y1={pcy(y)} x2={pcx(x)} y2={pcy(y+1)}
+                      stroke={broken ? 'rgba(239,68,68,0.2)' : '#334155'} strokeWidth={1.5}
+                      strokeDasharray={broken ? '3 3' : 'none'} />
+                  );
+                }
+                return elems;
+              })
+            )}
+            {/* No diagonal mapping links — physical mesh only has grid-adjacent (H/V) links */}
+            {/* Physical nodes */}
+            {Array.from({ length: PSIZE }, (_, y) =>
+              Array.from({ length: PSIZE }, (_, x) => {
+                const ps = pNodeState[`${x},${y}`];
+                const isDef = ps === 'defective';
+                const isMapped = ps === 'mapped' || ps === 'frontier';
+                const fill = pStateColor[ps] || '#334155';
+                return (
+                  <g key={`pn-${x}-${y}`}>
+                    <circle cx={pcx(x)} cy={pcy(y)} r={isDef ? 9 : isMapped ? (ps === 'frontier' ? 11 : 8) : 5}
+                      fill={isDef ? colors.fault : isMapped ? fill : 'transparent'}
+                      stroke={isDef ? '#fca5a5' : isMapped ? fill : '#475569'}
+                      strokeWidth={isDef ? 2 : ps === 'frontier' ? 3 : 1.5}
+                      opacity={isDef ? 0.7 : 1} />
+                    {isDef && (
+                      <text x={pcx(x)} y={pcy(y) + 4} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">✕</text>
+                    )}
+                    {isMapped && (
+                      <text x={pcx(x)} y={pcy(y) + 4} textAnchor="middle" fill="white" fontSize="7">
+                        {`${x},${y}`}
+                      </text>
+                    )}
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
+        {[['Mapped', colors.mapped, false, false], ['Frontier', colors.frontier, false, false],
+          ['Candidate', colors.candidate, true, false], ['Unmapped', colors.unmapped, false, false],
+          ['Defective', colors.fault, false, true]].map(([label, color, dashed, defect]) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <svg width={20} height={20}>
+              <circle cx={10} cy={10} r={7}
+                fill={dashed ? 'transparent' : defect ? color : color}
+                stroke={color} strokeWidth={2}
+                strokeDasharray={dashed ? '3 2' : 'none'}
+                opacity={defect ? 0.7 : 1} />
+              {defect && <text x={10} y={13} textAnchor="middle" fill="white" fontSize="9" fontWeight="bold">✕</text>}
+            </svg>
+            <span style={{ fontSize: 13, color: colors.dim }}>{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, padding: '8px 12px', background: '#1e293b', borderRadius: 8, border: `1px solid ${colors.border}` }}>
+        <span style={{ color: colors.frontier, fontWeight: 600 }}>💡 </span>
+        <span style={{ color: colors.text, fontSize: 14 }}>{notes[currentStep] || ''}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ STAGE 3: GEOMETRIC SCORING ════════════════ */
+
+function AngleArc({ cx, cy, r, startAngle, endAngle, color, label, labelR }) {
+  // Draw an arc from startAngle to endAngle (in degrees, 0=right, CCW)
+  const toRad = d => d * Math.PI / 180;
+  const sx = cx + r * Math.cos(toRad(startAngle));
+  const sy = cy - r * Math.sin(toRad(startAngle));
+  const ex = cx + r * Math.cos(toRad(endAngle));
+  const ey = cy - r * Math.sin(toRad(endAngle));
+  const sweep = endAngle - startAngle > 180 ? 1 : 0;
+  const lx = cx + (labelR || r + 12) * Math.cos(toRad((startAngle + endAngle) / 2));
+  const ly = cy - (labelR || r + 12) * Math.sin(toRad((startAngle + endAngle) / 2));
+  return (
+    <g>
+      <path d={`M ${sx} ${sy} A ${r} ${r} 0 ${sweep} 0 ${ex} ${ey}`}
+        fill="none" stroke={color} strokeWidth={2.5} />
+      {label && <text x={lx} y={ly + 4} textAnchor="middle" fill={color} fontSize="12" fontWeight="bold">{label}</text>}
+    </g>
+  );
+}
+
+function Stage3() {
+  const [step, setStep] = useState(0);
+  const maxStep = 3;
+
+  // Grid-based layout: all links are H or V
+  // Virtual space: B at center, D above (north), A? to the right (east)
+  //   D
+  //   |
+  //   B — A?
+  //
+  // In virtual mesh, angle D-B-A = 90° (north to east)
+
+  const G = 70; // grid spacing
+
+  // Virtual positions
+  const vB = [140, 220];
+  const vD = [vB[0], vB[1] - G];      // above B
+  const vA = [vB[0] + G, vB[1]];      // right of B
+
+  // Physical: B' and D' are already mapped
+  // B' at grid position, D' above B' (same relative direction)
+  const pB = [380, 200];
+  const pD = [pB[0], pB[1] - G];      // D' above B' — same as virtual
+
+  // Candidate 1 (GOOD): right of B' → preserves 90° angle
+  const pA_good = [pB[0] + G, pB[1]]; // east of B'
+
+  // Candidate 2 (BAD): above D' → collinear with D'-B' (0° angle, not 90°)
+  const pA_bad = [pD[0], pD[1] - G];  // above D', making D'-B'-A' NOT 90°...
+  // Actually: angle measured at B between D' and A_bad:
+  // D' is above B', A_bad is above D' — from B's perspective, both are "up" → collinear → 0° deviation but
+  // Let me think about this differently. The angle at B between link B→D and link B→A:
+  // Virtual: B→D is up, B→A is right → 90°
+  // Good: B'→D' is up, B'→A_good is right → 90° ✓
+  // Bad: B'→A_bad should be also up → 0° angle with B'→D' (collinear) instead of 90°
+  const pA_bad2 = [pB[0], pB[1] + G]; // below B' — angle between B'→D'(up) and B'→A_bad(down) = 180°, not 90°
+
+  const svgW = 640, svgH = 390;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+        <button onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0} style={btnStyle}>← Prev</button>
+        <span style={{ color: colors.dim, fontSize: 14 }}>Step {step} / {maxStep}</span>
+        <button onClick={() => setStep(Math.min(maxStep, step + 1))} disabled={step >= maxStep} style={btnStyle}>Next →</button>
+        <button onClick={() => setStep(0)} style={{ ...btnStyle, marginLeft: 'auto' }}>Reset</button>
+      </div>
+
+      <div style={{ background: colors.bg, borderRadius: 12, padding: 16, border: `1px solid ${colors.border}` }}>
+        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+          {/* Divider */}
+          <line x1={280} y1={20} x2={280} y2={360} stroke={colors.border} strokeWidth={1} strokeDasharray="4 4" />
+
+          {/* ── VIRTUAL SPACE (left) ── */}
+          <text x={140} y={24} textAnchor="middle" fill={colors.accent} fontSize="14" fontWeight="bold">Virtual Mesh</text>
+
+          {/* Step 0: Show B and D (already mapped) */}
+          {step >= 0 && <>
+            {/* B—D vertical link */}
+            <line x1={vB[0]} y1={vB[1]} x2={vD[0]} y2={vD[1]} stroke="#64748b" strokeWidth={2.5} />
+            <GridNode x={vD[0]} y={vD[1]} r={10} fill={colors.mapped} label="D (mapped)" labelColor={colors.mapped} />
+            <GridNode x={vB[0]} y={vB[1]} r={12} fill={colors.mapped} label="B (mapped)" labelColor={colors.mapped} />
+          </>}
+
+          {/* Step 1: Show candidate A in virtual + the 90° angle */}
+          {step >= 1 && <>
+            {/* B—A horizontal link */}
+            <line x1={vB[0]} y1={vB[1]} x2={vA[0]} y2={vA[1]} stroke={colors.frontier} strokeWidth={2.5} />
+            <GridNode x={vA[0]} y={vA[1]} r={10} fill={colors.frontier} label="A (to map)" labelColor={colors.frontier} />
+            {/* 90° arc at B */}
+            <AngleArc cx={vB[0]} cy={vB[1]} r={22} startAngle={0} endAngle={90} color={colors.accent2} label="90°" labelR={38} />
+          </>}
+
+          {/* ── PHYSICAL SPACE (right) ── */}
+          <text x={430} y={24} textAnchor="middle" fill={colors.accent3} fontSize="14" fontWeight="bold">Physical Mesh</text>
+
+          {/* Step 0: Show B' and D' */}
+          {step >= 0 && <>
+            <line x1={pB[0]} y1={pB[1]} x2={pD[0]} y2={pD[1]} stroke="#64748b" strokeWidth={2.5} />
+            <GridNode x={pD[0]} y={pD[1]} r={10} fill={colors.mapped} label="D'" labelColor={colors.mapped} />
+            <GridNode x={pB[0]} y={pB[1]} r={12} fill={colors.mapped} label="B'" labelColor={colors.mapped} />
+          </>}
+
+          {/* Step 2: Show both candidates on physical side */}
+          {step >= 2 && <>
+            {/* Good candidate: right of B' */}
+            <line x1={pB[0]} y1={pB[1]} x2={pA_good[0]} y2={pA_good[1]} stroke={colors.good} strokeWidth={2.5} />
+            <GridNode x={pA_good[0]} y={pA_good[1]} r={10} fill={colors.good} />
+            {step < 3 && <text x={pA_good[0] + 14} y={pA_good[1] - 10} textAnchor="start" fill={colors.good} fontSize="11" fontWeight="bold">Candidate 1</text>}
+            {/* 90° arc */}
+            <AngleArc cx={pB[0]} cy={pB[1]} r={22} startAngle={0} endAngle={90} color={colors.good} label="90°" labelR={38} />
+
+            {/* Bad candidate: below B' */}
+            <line x1={pB[0]} y1={pB[1]} x2={pA_bad2[0]} y2={pA_bad2[1]} stroke={colors.bad} strokeWidth={2.5} strokeDasharray="5 3" />
+            <GridNode x={pA_bad2[0]} y={pA_bad2[1]} r={10} fill={colors.bad} />
+            {step < 3 && <text x={pA_bad2[0] + 14} y={pA_bad2[1] + 5} textAnchor="start" fill={colors.bad} fontSize="11" fontWeight="bold">Candidate 2</text>}
+            {/* 180° arc (collinear — D' is up, A_bad is down) */}
+            <AngleArc cx={pB[0]} cy={pB[1]} r={28} startAngle={-90} endAngle={90} color={colors.bad} label="180°" labelR={44} />
+          </>}
+
+          {/* Step 3: Show scoring verdict */}
+          {step >= 3 && <>
+            {/* Good verdict */}
+            <rect x={pA_good[0] + 16} y={pA_good[1] - 28} width={140} height={42} rx={6}
+              fill="rgba(52,211,153,0.12)" stroke={colors.good} strokeWidth={1.5} />
+            <text x={pA_good[0] + 86} y={pA_good[1] - 10} textAnchor="middle" fill={colors.good} fontSize="11" fontWeight="bold">
+              90° → 90° preserved
+            </text>
+            <text x={pA_good[0] + 86} y={pA_good[1] + 6} textAnchor="middle" fill={colors.good} fontSize="11">
+              low cost ✓
+            </text>
+
+            {/* Bad verdict */}
+            <rect x={pA_bad2[0] + 16} y={pA_bad2[1] - 6} width={148} height={42} rx={6}
+              fill="rgba(248,113,113,0.12)" stroke={colors.bad} strokeWidth={1.5} />
+            <text x={pA_bad2[0] + 90} y={pA_bad2[1] + 12} textAnchor="middle" fill={colors.bad} fontSize="11" fontWeight="bold">
+              90° → 180° distorted
+            </text>
+            <text x={pA_bad2[0] + 90} y={pA_bad2[1] + 28} textAnchor="middle" fill={colors.bad} fontSize="11">
+              high cost ✗
+            </text>
+
+            {/* Checkmark and X */}
+            <text x={pA_good[0]} y={pA_good[1] - 2} textAnchor="middle" fill={colors.good} fontSize="16">✓</text>
+            <text x={pA_bad2[0]} y={pA_bad2[1] - 2} textAnchor="middle" fill={colors.bad} fontSize="16">✗</text>
+          </>}
+        </svg>
+      </div>
+
+      <div style={{ marginTop: 12, padding: '8px 12px', background: '#1e293b', borderRadius: 8, border: `1px solid ${colors.border}` }}>
+        <span style={{ color: colors.frontier, fontWeight: 600 }}>💡 </span>
+        <span style={{ color: colors.text, fontSize: 14 }}>{[
+          'B and D are already mapped. In virtual mesh, D is directly above B (vertical link).',
+          'A is the next virtual node to map. It is to the right of B. The angle D-B-A in virtual space is 90°.',
+          'Two physical candidates for A. Candidate 1 (right of B\') preserves the 90° angle. Candidate 2 (below B\') makes it 180° (collinear with D\').',
+          'The geometric score measures how well the mapping preserves local angles. Candidate 1 keeps 90° → low cost. Candidate 2 distorts to 180° → high cost. We pick Candidate 1.',
+        ][step]}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ MAIN APP ════════════════ */
+
+const btnStyle = {
+  background: colors.card, color: colors.text, border: `1px solid ${colors.border}`,
+  borderRadius: 6, padding: '6px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+};
+
+const tabStyle = (active) => ({
+  background: active ? colors.accent : 'transparent',
+  color: active ? '#0f172a' : colors.dim,
+  border: `1px solid ${active ? colors.accent : colors.border}`,
+  borderRadius: 8, padding: '10px 20px', cursor: 'pointer',
+  fontSize: 14, fontWeight: active ? 700 : 500,
+  transition: 'all 0.2s',
+});
+
+function App() {
+  const [tab, setTab] = useState(0);
+  const tabs = ['1. Frontier Expansion', '2. Geometric Scoring'];
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4, color: colors.text }}>
+        Mapper Module — Visual Walkthrough
+      </h1>
+      <p style={{ color: colors.dim, fontSize: 14, marginBottom: 20 }}>
+        Interactive visualization of the mesh-to-mesh remapping pipeline
+      </p>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {tabs.map((label, i) => (
+          <button key={i} style={tabStyle(tab === i)} onClick={() => setTab(i)}>{label}</button>
+        ))}
+      </div>
+
+      {tab === 0 && <Stage2 />}
+      {tab === 1 && <Stage3 />}
+
+      <div style={{ marginTop: 32, padding: '16px', background: colors.bg, borderRadius: 12, border: `1px solid ${colors.border}` }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: colors.text }}>Pipeline Summary</h3>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+          <div style={{ background: colors.card, padding: '8px 14px', borderRadius: 8, color: colors.accent }}>
+            Defective Mesh
+          </div>
+          <span style={{ color: colors.dim }}>→</span>
+          <div style={{ background: colors.card, padding: '8px 14px', borderRadius: 8, color: colors.accent3, cursor: 'pointer' }}
+            onClick={() => setTab(0)}>
+            1. Frontier Expand → Mapping
+          </div>
+          <span style={{ color: colors.dim }}>→</span>
+          <div style={{ background: colors.card, padding: '8px 14px', borderRadius: 8, color: colors.accent2, cursor: 'pointer' }}
+            onClick={() => setTab(1)}>
+            2. Geometric Score → Best Fit
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
