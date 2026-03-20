@@ -1,4 +1,4 @@
-# Paper Structure: Model-Defined Remapper (MICRO 2026)
+# Paper Structure: Defect-Tolerant Wafer-Scale NoC Remapping for Disaggregated AI Inference (MICRO 2026)
 
 > Target: 11 pages, double-column, double-blind.
 > MICRO recommended flow: Introduction → Background → Design → Implementation → Evaluation → Related Work → Conclusion.
@@ -27,7 +27,9 @@ Hook → Problem → Insight → Contributions → Results snapshot.
 
 ## 2. Background & Motivation (~1.5 pages)
 
-### 2.1 Defect Types in Semiconductor Manufacturing
+### 2.1 Defects and Defect Tolerance in Semiconductor Manufacturing
+
+#### 2.1.1 Defect Types
 
 Defects in semiconductor manufacturing are inherently unavoidable and can be categorized into two primary regimes based on the Bathtub Curve:
 
@@ -53,18 +55,90 @@ Defects in semiconductor manufacturing are inherently unavoidable and can be cat
 - **Intrinsic wear-out** creates faults that emerge during operation — cores, routers, or links that were healthy at boot time may fail later. This motivates future work on online/incremental remapping (§8.2), but the offline remapping framework we present is the necessary foundation.
 - At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement.
 
-### 2.2 Defects Are Inevitable: Scale Makes It Certain
-- Semiconductor defect bathtub curve: extrinsic failures dominate early life, intrinsic wear-out dominates late life, with a stable useful-life period in between.
-- The overall die yield $Y = Y_M \cdot Y_S \cdot Y_R$ (material-limited × systematic-limited × random-limited) — each factor compounds, and all decrease with die area.
-- At wafer scale, defect probability per chip approaches 1 — defect tolerance is not optional, it is a design requirement.
+#### 2.1.2 Overcoming Defects: Redundancy and Its Limits
 
-### 2.3 Regular Topology Is a Software Requirement
+**Yield drops exponentially with die area.** As shown in §2.1.1, the overall die yield $Y = Y_M \cdot Y_S \cdot Y_R$ — each factor compounds, and all decrease with die area $A$. Under the negative binomial model \cite{stapper1983}, even at a modest defect density $D_0$, increasing chip area makes defect-free fabrication exponentially unlikely. This creates a fundamental tension: larger chips enable more transistors, better latency, and higher computational efficiency — but the probability of manufacturing a perfect die vanishes.
+
+**Redundancy is the industry's standard solution.** To maintain yield despite inevitable defects, chips are designed with spare components that can substitute for defective ones:
+
+- **Discard/bin (independent units):** GPUs and CPUs over-provision compute units and fuse off defective ones, selling lower-capability chips as different SKUs (Stock Keeping Units — distinct product models derived from the same physical die). The same silicon is tested, and chips are sorted into product tiers based on how many functional units survive: NVIDIA's GA102 die has 84 SMs, but the RTX 3090 ships with 82 enabled while the RTX 3080 ships with only 68 — chips with more defective SMs are binned into lower-tier products \cite{nvidia2020ga102}. Similarly, AMD Zen 3 CCDs have 8 cores but the Ryzen 5 5600X enables only 6 \cite{gamersnexus2013binning}. This works because GPU SMs and CPU cores are connected via crossbar or ring — disabling a unit does not create a topological "hole."
+- **Discard (mesh-connected, edge only):** Tilera's TILE-Gx72 (8×9 on-chip mesh, 5 physical networks, XY routing) performs yield binning by fusing off **edge** cores to produce lower SKUs (72→36→16→9 cores). However, an interior router defect forces the **entire die to be discarded** — there is no mechanism to route around an interior hole in the mesh \cite{tilera2013tilegx}.
+- **Spare + remap (mesh-connected, interior):** Cerebras WSE provisions ~1.5–7% spare cores across the wafer. A proprietary, undisclosed algorithm routes around defective cores and links, exposing a regular 2D mesh to users \cite{luczynski2024reduce, cerebras2025sigops}. Tesla Dojo D1 similarly reserves 6 of 360 cores (1.7%) as spares \cite{talpes2023dojo}.
+
+**Key observation:** Discard/bin works when compute units are independent or crossbar-connected. For **mesh-connected** architectures, interior defects break dimension-order routing — the only options are to discard the defective region or to remap around it.
+
+**But discarding fails catastrophically at wafer scale.** For a $W \times W$ physical mesh with i.i.d. node defect probability $p$, the largest defect-free $s \times s$ sub-mesh has expected side length (see `reference/max_spacing_derivations.md` for full derivation):
+
+$$s^* \approx \sqrt{\frac{2 \ln W}{p}}$$
+
+This follows from a threshold argument: an $s \times s$ sub-mesh survives with probability $(1-p)^{s^2}$, and there are $(W-s+1)^2$ possible placements. Setting the expected count of surviving sub-meshes to 1 and solving gives the formula above.
+
+**Concrete impact:** For a Cerebras-class mesh ($W = 750$, $p = 0.01$):
+
+$$s^* \approx \sqrt{\frac{2 \ln 750}{0.01}} = \sqrt{\frac{2 \times 6.62}{0.01}} \approx 36$$
+
+Out of a 750×750 = 562,500-node mesh, the largest guaranteed defect-free square is only ~36×36 = 1,296 nodes — **0.23% utilization**. The discard approach wastes >99.7% of healthy silicon.
+
+| $W$ | $p$ | $s^*$ (side) | $s^{*2}/W^2$ (utilization) |
+|-----|-----|-------------|---------------------------|
+| 100 | 1% | 30 | 9.0% |
+| 500 | 1% | 35 | 0.49% |
+| 750 | 1% | 36 | 0.23% |
+| 750 | 5% | 16 | 0.046% |
+
+The critical scaling: $s^*$ grows only as $\sqrt{\ln W}$ — essentially flat — while the total mesh area grows as $W^2$. Increasing the physical mesh barely helps the discard approach.
+
+**Cerebras's solution: remap and expose regularity.** Rather than discarding, the Cerebras WSE uses redundant links and a proprietary remapping process to route around defects, exposing a regular 2D mesh to the user \cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization (>93% of cores active) but the algorithm is undisclosed — it cannot be reproduced, analyzed, or extended by the research community. Furthermore, the remapping only restores regularity; it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
+
+#### 2.1.3 Limitations of Current Approaches
+
+| Approach | Mechanism | Limitation |
+|----------|-----------|------------|
+| Yield binning (NVIDIA, AMD, Intel) | Over-provision, fuse off defective SMs/CUs/cores, sell as lower SKU | Only works for independent/crossbar-connected units; not applicable to mesh-connected architectures |
+| Edge discard (Tilera TILE-Gx) | Fuse off edge cores; discard die on interior defect | Cannot tolerate interior faults in mesh topology |
+| Spare cores + proprietary remap (Cerebras WSE) | ~1.5% spare cores; undisclosed algorithm routes around defects \cite{luczynski2024reduce, cerebras2025sigops} | Algorithm not published; does not optimize for workload or exploit diagonal links |
+| Software discard | Use largest defect-free rectangular sub-mesh | Catastrophic utilization loss at wafer scale (see §2.1.2: 0.23% for W=750, p=1%) |
+| Topology reconfiguration (Zhang et al.) | Remap virtual mesh onto faulty physical mesh | Small scale (<128), no workload awareness, no routing guarantee |
+
+**This motivates our work:** a transparent, workload-aware remapping framework that uses *all* healthy nodes (typically >90% at 7% defect rate), not just the ~0.2% that form a contiguous defect-free square — with provable deadlock-free routing guarantees.
+
+### 2.2 Disaggregated AI Inference
+
+> TODO: Fill in content for disaggregated AI inference background.
+
+**Prefill vs. Decode phases.** Modern large language model (LLM) inference consists of two distinct phases with fundamentally different computational characteristics:
+
+- **Prefill phase:** Processes the entire input prompt in parallel. This phase is **compute-bound** — it performs a large matrix multiplication (GEMM) over all input tokens simultaneously, achieving high arithmetic intensity and high utilization of compute units. The communication pattern is systolic (nearest-neighbor data flow), well-suited to regular 2D mesh topologies.
+
+- **Decode phase:** Generates output tokens one at a time, autoregressively. Each step performs a matrix-vector multiplication (GEMV) — the KV-cache is large but the "query" is a single token. This phase is **memory-bandwidth-bound** with low arithmetic intensity, and its communication pattern involves broadcast (distributing the query vector) and reduce (aggregating partial results) operations across the mesh.
+
+**Why disaggregation?** Because prefill and decode have opposite resource requirements (compute-bound vs. memory-bound), running them on the same hardware wastes resources — prefill underutilizes memory bandwidth while decode underutilizes compute. **Disaggregated inference** separates these phases onto different hardware partitions, each sized and optimized for its workload:
+
+- Prefill clusters: dense compute, optimized for high-throughput GEMM.
+- Decode clusters: high memory bandwidth, optimized for low-latency GEMV with large KV-caches.
+
+**Relevance to our work:** On a wafer-scale mesh with defects, the remapper must carve out two types of virtual sub-meshes from the same faulty physical substrate — one optimized for GEMM (prefill) and another for GEMV (decode). This is a natural extension of workload-aware remapping: the cost function weights communication patterns differently for each phase, and the hierarchical partitioning can allocate distinct physical regions to each virtual partition. Defect tolerance becomes even more critical in this setting, as both partitions must be simultaneously viable on the same defective wafer.
+
+### 2.3 Our Goal
+Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh — preserving the regular programming model while maximizing utilization, optimizing for disaggregated AI inference workloads (prefill GEMM and decode GEMV), and guaranteeing deadlock-free routing.
+
+---
+
+> **Archived subsections** (moved from §2 during restructuring — retained for reference, may be incorporated into §3 or §7):
+
+<details>
+<summary>Archived: Regular Topology Is a Software Requirement (formerly §2.2)</summary>
+
 - High-performance kernels (systolic GEMM, broadcast+reduce GEMV) are designed for regular 2D mesh:
   - Uniform neighbor count enables systolic dataflow.
   - Dimension-order routing gives deterministic latency.
   - Programming models assume a clean coordinate space.
 
-### 2.4 Symmetric vs. Asymmetric Topologies
+</details>
+
+<details>
+<summary>Archived: Symmetric vs. Asymmetric Topologies (formerly §2.4)</summary>
+
 - **Symmetric topologies (e.g., Clos):** fault tolerance is nearly solved.
   - All middle-stage switches are functionally interchangeable — losing one merely reduces path diversity.
   - Acyclic structure means rerouting never causes deadlock; at worst, congestion.
@@ -78,64 +152,7 @@ Defects in semiconductor manufacturing are inherently unavoidable and can be cat
   - The remapping problem (embedding a virtual regular mesh into a faulty physical mesh) is NP-hard (reduces from subgraph isomorphism).
   - No prior work addresses remapping at large scale (>128 nodes) with workload awareness and deadlock-free routing.
 
-### 2.5 Industry Practice: Spare Cores and Yield Binning
-Modern chips universally over-provision and disable defective units. Concrete examples:
-
-**GPUs (SM/CU harvesting — yield binning to lower SKUs):**
-| Die | Full Die | Top SKU (enabled) | Disabled | Source |
-|-----|----------|-------------------|----------|--------|
-| NVIDIA GA102 | 84 SMs | RTX 3090: 82 SMs | 2 (2.4%) | NVIDIA Ampere Whitepaper |
-| NVIDIA AD102 | 144 SMs | RTX 4090: 128 SMs | 16 (11%) | TechPowerUp |
-| NVIDIA GH100 | 144 SMs | H100 SXM: 132 SMs | 12 (8.3%) | NVIDIA Hopper Architecture |
-| AMD Navi 31 | 96 CUs | RX 7900 XTX: 96 CUs; 7900 XT: 84 CUs | 0–12 | Tom's Hardware |
-
-**CPUs (core harvesting):**
-| Die | Full Die | Harvested SKU | Disabled | Source |
-|-----|----------|---------------|----------|--------|
-| AMD Zen 3 CCD | 8 cores | Ryzen 5 5600X: 6 cores | 2 (25%) | AnandTech |
-| Intel Sapphire Rapids tile | ~15 cores | Xeon: 14 cores | 1 (~7%) | WikiChip |
-
-**Accelerators (spare cores with routing):**
-| Product | Physical | Enabled | Spare | Source |
-|---------|----------|---------|-------|--------|
-| Cerebras WSE-1 | ~406K cores | 400K | ~1.5% | Cerebras blog |
-| Tesla Dojo D1 | 360 cores | 354 | 6 (1.7%) | Hot Chips 34 |
-
-**Two strategies emerge:**
-1. **Discard/bin** (GPUs, CPUs): over-provision, fuse off defects, sell as lower SKU. No topology change — the remaining units are independent (GPU SMs) or connected via crossbar, so disabling units doesn't create an irregular topology.
-2. **Spare + remap** (Cerebras, Dojo): small spare pool (~1–2%), reconfigure routing to bypass faults. Required because cores are mesh-connected — disabling a core creates a hole in the topology.
-
-**Key observation:** Discard/bin works when units are independent or crossbar-connected (GPUs, CPUs). It fails for **mesh-connected** architectures where a disabled interior node creates an irregular topology that breaks dimension-order routing.
-
-### 2.6 Limitations of Current Approaches
-| Approach | Mechanism | Limitation |
-|----------|-----------|------------|
-| Yield binning (NVIDIA, AMD, Intel) | Over-provision, fuse off defective SMs/CUs/cores, sell as lower SKU | Only works for independent/crossbar-connected units; not applicable to mesh-connected architectures |
-| Spare cores + proprietary remap (Cerebras WSE) | ~1.5% spare cores; undisclosed algorithm routes around defects \cite{luczynski2024reduce, cerebras2025sigops} | Algorithm not published; cannot be reproduced, analyzed, or extended by the community |
-| Software discard | Use largest defect-free rectangular sub-mesh | Abandons healthy-but-irregular silicon; utilization drops sharply at higher defect rates |
-| Topology reconfiguration (Zhang et al.) | Remap virtual mesh onto faulty physical mesh | Small scale (<128), no workload awareness, no routing guarantee |
-
-### 2.7 Quantifying the Cost of Discard
-
-> **TODO: Derive a model for the expected largest defect-free k×k sub-mesh in an N×N grid given i.i.d. defect probability p.**
->
-> Goal: show a curve of **max defect-free mesh size vs. defect rate** (e.g., for N=512).
-> - At p=1%, largest defect-free sub-mesh ≈ ?×?
-> - At p=5%, ≈ ?×?
-> - At p=10%, ≈ ?×?
->
-> Expected result: the largest defect-free rectangle shrinks rapidly with p, meaning the discard approach wastes most of the healthy silicon even at moderate defect rates.
->
-> This replaces the vague "utilization drops sharply" claim in §2.4 with a concrete, quantitative argument. Should include:
-> 1. Analytical model or probabilistic bound (related to geometric distribution / longest run in 2D)
-> 2. Monte Carlo validation (generate random defect maps, measure largest defect-free rectangle)
-> 3. A figure: x-axis = defect rate, y-axis = max sub-mesh size / total mesh size (utilization)
-> 4. Compare: utilization under discard vs. utilization under remapping (our approach uses ALL healthy nodes)
->
-> This is the **quantitative motivation** for the entire paper — make the gap between discard and remapping visually obvious.
-
-### 2.8 Our Goal
-Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh — preserving the regular programming model while maximizing utilization, optimizing for the target workload, and guaranteeing deadlock-free routing.
+</details>
 
 ---
 
@@ -443,24 +460,24 @@ MICRO papers typically include: **Evaluation** (the largest section — reviewer
 
 > These are draft-quality narrative notes for writing the actual paper sections. Cross-reference with `reference/*.md` files for detailed citations.
 
-### Defects Are Inevitable (for §2.1)
+### Defects Are Inevitable (for §2.1.1)
 
 Semiconductor defects follow a bathtub curve: high infant mortality, a stable useful-life period, then increasing wear-out failures. Critically, as devices age, defect rates rise — components that pass initial screening may still develop faults over their operational lifetime. Combined with shrinking process nodes and growing die/wafer areas, the probability of at least one defect per chip approaches certainty. Designers must plan for defects, not hope to avoid them.
 
 - Reference: https://testflowinc.com/blog/semiconductor-defect-rate-bathtub-curve
 
-### Topology-Aware Computing Depends on Regularity (for §2.2)
+### Topology-Aware Computing Depends on Regularity (for §2.2, formerly §2.3)
 
 High-performance kernels (GEMM on systolic arrays, GEMV with broadcast+reduce, collective communications) are designed around **regular topologies** — they exploit predictable hop counts, uniform bandwidth, and symmetric routing to schedule data movement and balance load. A regular topology allows the compiler/runtime to reason about latency and throughput more effectively.
 
-### Redundancy: Industry Examples (for §2.4)
+### Redundancy: Industry Examples (for §2.1.2)
 
 To maintain regularity despite inevitable defects, chip designers provision **spare components** and remap defective units to healthy ones, exposing an ideal topology to software:
 
 - **AMD MI250X/MI300X:** Each compute die has 2 extra Compute Units (CUs) disabled for yield (112→110 per GCD on MI250X, 40→38 per XCD on MI300X). Software sees a uniform CU count regardless of which units are harvested. (ref: `reference/AMD_MI_Series_Redundancy.md`)
 - **Cerebras WSE-3:** 970K physical cores, 900K active (~7% spare). Defective cores are locally replaced; the 2D mesh fabric reroutes around them transparently. (ref: `reference/Cerebras_WSE_Redundancy.md`)
 
-### Symmetric vs. Asymmetric Recovery (for §2.3)
+### Symmetric vs. Asymmetric Recovery (archived from old §2.4, may go in §3 or §7)
 
 **Symmetric topologies (e.g., Clos networks):** Fault tolerance is straightforward. All middle-stage switches are functionally interchangeable — losing one reduces path diversity but not connectivity. The topology is acyclic, so conflicts cause congestion, never deadlock. Recovery is just graph recoloring (polynomial time). (ref: `reference/Clos_Network_Fault_Tolerance.md`)
 
@@ -469,7 +486,7 @@ To maintain regularity despite inevitable defects, chip designers provision **sp
 - Can introduce cyclic dependencies → **deadlock**
 - Requires non-trivial remapping to restore a usable virtual topology
 
-### The Hidden Cost of Redundancy (for §2.5)
+### The Hidden Cost of Redundancy (for §2.1.3)
 
 Current redundancy schemes hide unused spare components after remapping:
 - **Spare routers and links** that are not on any active path are powered down or ignored.
