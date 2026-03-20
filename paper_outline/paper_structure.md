@@ -20,15 +20,15 @@ But manufacturing defects are inevitable at wafer scale. Even at a modest 1% def
 Industry addresses defects through yield binning (NVIDIA, AMD), edge discard (Tilera), and spare-core remapping (Cerebras, Tesla Dojo). Cerebras's approach is the most sophisticated: a proprietary algorithm routes around defects to expose a regular 2D mesh to software \cite{cerebras2025sigops, luczynski2024reduce}. However, the algorithm is undisclosed and cannot be reproduced or extended. Moreover, it only restores regularity — it does not optimize for workload-specific communication patterns, and it conceals redundant resources (spare cores, diagonal links) that could improve performance rather than merely restoring a regular topology.
 
 **P5 — Our approach.**
-We propose a **workload-aware remapping framework** that:
-1. **Maps right-sized virtual meshes** onto a defective physical substrate, tailored to each inference stage's communication pattern (systolic GEMM for prefill, broadcast/reduce GEMV for decode).
-2. **Utilizes redundant resources** — rather than hiding spare cores and links behind a regular facade, the remapper exposes and exploits them (e.g., diagonal links as routing shortcuts) to improve performance beyond what regularity restoration alone achieves.
-3. **Guarantees deadlock-free routing** on the resulting irregular physical topology — without this, any remapping is unusable in practice, as irregular paths can introduce cyclic channel dependencies that cause permanent message blocking.
+Given that inevitable defects cause serious mesh performance degradation (§2.1) and that AI inference workloads have distinct communication requirements per phase (§2.2), we propose a remapping framework that addresses the problem at three levels:
+1. **Remap over defective mesh to expose regular virtual topology with deadlock-free routing.** The remapper maps a virtual regular mesh onto all healthy nodes of a defective physical substrate — recovering usable area that discard-based approaches abandon. Crucially, the resulting irregular physical paths are guaranteed deadlock-free via a submesh-hierarchy routing scheme, without which any remapping over irregular topology is unusable in practice.
+2. **Optimize remapping for workload communication patterns.** Rather than a topology-only mapping, the remapper incorporates workload-specific cost functions — minimizing hop stretch along systolic data-flow edges for GEMM (prefill) and broadcast/reduce tree depth for GEMV (decode). This enables right-sized, communication-efficient virtual partitions for each inference phase.
+3. **Exploit redundant resources to further mitigate remapping overhead.** Current approaches hide spare cores, extra links (e.g., diagonal connections), and additional virtual channels behind a regular facade. Our remapper instead exposes and utilizes these resources — diagonal links as routing shortcuts to reduce hop count, spare cores as additional compute capacity, and extra channels for routing flexibility — turning redundancy overhead into a performance advantage.
 
 **P6 — Contributions:**
-1. A hierarchical virtual-to-physical topology remapping framework that scales to 512×512 meshes with workload-aware cost optimization for disaggregated AI inference.
-2. A deadlock-free routing scheme for irregular post-remapping topologies via submesh hierarchy routing (ascend-then-descend, requiring only ≥2 virtual channels).
-3. Exploitation of underutilized routing resources (diagonal links) through cross-topology remapping, turning redundancy overhead into a performance advantage.
+1. A hierarchical virtual-to-physical topology remapping framework that scales to 512×512 meshes, with provably deadlock-free routing on arbitrary post-remapping topologies via submesh hierarchy routing (ascend-then-descend, requiring only ≥2 virtual channels).
+2. A workload-aware cost model that optimizes remapping for disaggregated AI inference — separately tuned for prefill (GEMM) and decode (GEMV) communication patterns.
+3. Exploitation of underutilized routing resources (diagonal links, spare cores, extra channels) through cross-topology remapping, turning redundancy overhead into a performance advantage.
 4. Comprehensive evaluation across scales (64×64 to 512×512), fault rates (1%–15%), and workloads (GEMM, GEMV), demonstrating [X%] utilization improvement over discard-based approaches with [Y%] of healthy-mesh performance.
 
 **Results teaser:** Key quantitative highlights (fill in after experiments finalize).
@@ -37,56 +37,26 @@ We propose a **workload-aware remapping framework** that:
 
 ## 2. Background & Motivation (~1.5 pages)
 
-### 2.1 Defects and Defect Tolerance in Semiconductor Manufacturing
+### 2.1 From Larger Chips to Defect Tolerance
 
-#### 2.1.1 Defect Types
+**Larger chip area directly improves performance.** Integrating more transistors on a single die increases on-chip compute density, memory bandwidth, and cache capacity — but the most critical benefit is eliminating off-chip communication. Data movement across chip boundaries costs 10–100× the energy and latency of on-chip transfers \cite{dally2020domain}, and multi-chip designs face bandwidth cliffs at every packaging level (die → package → board → rack) \cite{arunkumar2017mcm}. This motivates wafer-scale integration: the Cerebras WSE places ~900K cores with 40 GB of distributed SRAM on a single 46,225 mm² wafer, delivering 220 Pb/s on-wafer fabric bandwidth — orders of magnitude beyond what multi-chip packages achieve \cite{lie2023cerebras}.
 
-Defects in semiconductor manufacturing follow the Bathtub Curve — high infant mortality, a stable useful-life period, then increasing wear-out failures:
+**However, defects are inevitable — and their impact grows exponentially with area.** Manufacturing defects (random contamination, systematic process variations) occur at a stable density per unit area. Under the industry-standard negative binomial yield model \cite{stapper1983}, yield drops as $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$ — at wafer scale ($A$ = 46,225 mm²), the probability of a defect-free chip is essentially zero. Additionally, intrinsic wear-out mechanisms (electromigration, oxide breakdown) cause further failures over time. Defect tolerance is not optional at this scale; it is a design requirement.
 
-**Extrinsic defects (manufacturing-induced)** are present from fabrication and comprise two sub-types:
+> **[FIGURE PLACEHOLDER — §2.1 Figure: Defects and Mesh Fragmentation]**
+> Left: Bathtub curve — extrinsic (manufacturing) → useful life → intrinsic (wear-out), annotating static remapping vs. future online remapping.
+> Right: Utilization plot — x-axis: mesh size $W$, y-axis: max defect-free sub-mesh utilization $s^{*2}/W^2$, curves for defect rates 2%, 4%, 6%, 8%, 10%. Shows catastrophic utilization collapse at wafer scale. (Formal derivation of $s^* \approx \sqrt{2 \ln W / p}$ in Appendix.)
 
-- **Random defects** arise from stochastic contamination (particles, micro-scratches, cleanroom noise). They are spatially uncorrelated with a stable mean density per unit area \cite{xu2022wafermap}. The industry-standard yield model is the **negative binomial** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$, where $D_0$ is defect density, $A$ is die area, and $\alpha$ captures defect clustering (earlier models by Murphy \cite{murphy1964} and Seeds \cite{seeds1967} are special cases; see Cunningham \cite{cunningham1990} for a comprehensive comparison). As area $A$ grows, $Y_R \to 0$ — at wafer scale, zero-defect fabrication is essentially impossible.
+**GPUs and CPUs overcome defects through yield binning.** NVIDIA's GA102 die has 84 SMs but ships the RTX 3090 with 82 and RTX 3080 with 68 — chips with more defective SMs are sold as lower-tier SKUs (Stock Keeping Units) \cite{nvidia2020ga102}. AMD similarly bins Zen 3 CCDs from 8 to 6 cores \cite{gamersnexus2013binning}. This works because GPU SMs are independently connected to the memory system through a GPC–memory partition interconnect \cite{nvidia2020ga102} — disabling one SM does not affect routing or communication for remaining SMs.
 
-- **Systematic defects** are spatially correlated failures from process variations (lithographic limits, CMP non-uniformity, etch loading, thermal gradients). They produce recognizable wafer map signatures — Edge-Ring, Center, Scratch, Local, Donut — each diagnostic of a specific process root cause \cite{xu2022wafermap}. At advanced nodes (sub-7nm), systematic defects surpass random defects as the primary yield concern \cite{semiengineering2024systematic}.
+**Wafer-scale chips require a fundamentally different approach.** At wafer scale, two architectural choices distinguish the problem:
 
-**Intrinsic defects (wear-out)** emerge over time as devices degrade: electromigration (EM), gate oxide breakdown (TDDB), hot carrier injection (HCI), and bias temperature instability (BTI). These cause cores and links that were healthy at boot time to fail during operation.
+1. **Small cores to limit defect blast radius.** Rather than a few large cores, wafer-scale designs use hundreds of thousands of small, simple cores. Each core occupies a tiny area, so a single defect disables only one core out of ~900K — minimizing the fraction of compute lost per defect \cite{lie2023cerebras}.
+2. **2D mesh as the scalable interconnect.** GPU-style interconnects (multi-stage networks connecting SMs to memory partitions) scale poorly beyond hundreds of endpoints — wire count and switch complexity grow super-linearly. 2D mesh scales with $O(N)$ links and constant router radix, and maps directly to the planar silicon substrate (nearest-neighbor wiring only) \cite{lie2019wafer}. This is why all large-scale monolithic architectures (Cerebras WSE) adopt 2D mesh.
 
-At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement. Extrinsic defects are known at manufacturing/boot time and can be addressed by static remapping; intrinsic wear-out motivates future work on online remapping (§8.2).
+**But 2D mesh makes defect tolerance fundamentally harder.** In a GPU, each SM is a leaf node — it sends and receives its own traffic but never forwards packets for other SMs. In a 2D mesh, every core also serves as a router for its neighbors. An interior defect therefore creates a routing hole — messages cannot traverse through it, breaking dimension-order routing for all traffic that would cross that point. Even a few defects can drastically limit the maximum contiguous defect-free mesh region. As shown in the figure above, at 1% defect rate on a 750×750 mesh, the largest guaranteed defect-free square is only ~36×36 nodes — **0.23% utilization** (see Appendix for formal proof).
 
-#### 2.1.2 Overcoming Defects: Redundancy and Its Limits
-
-**Yield drops exponentially with die area.** As shown in §2.1.1, the overall die yield $Y = Y_M \cdot Y_S \cdot Y_R$ — each factor compounds, and all decrease with die area $A$. Under the negative binomial model \cite{stapper1983}, even at a modest defect density $D_0$, increasing chip area makes defect-free fabrication exponentially unlikely. This creates a fundamental tension: larger chips enable more transistors, better latency, and higher computational efficiency — but the probability of manufacturing a perfect die vanishes.
-
-**Redundancy is the industry's standard solution.** To maintain yield despite inevitable defects, chips are designed with spare components that can substitute for defective ones:
-
-- **Discard/bin (independent units):** GPUs and CPUs over-provision compute units and fuse off defective ones, selling lower-capability chips as different SKUs (Stock Keeping Units — distinct product models derived from the same physical die). The same silicon is tested, and chips are sorted into product tiers based on how many functional units survive: NVIDIA's GA102 die has 84 SMs, but the RTX 3090 ships with 82 enabled while the RTX 3080 ships with only 68 — chips with more defective SMs are binned into lower-tier products \cite{nvidia2020ga102}. Similarly, AMD Zen 3 CCDs have 8 cores but the Ryzen 5 5600X enables only 6 \cite{gamersnexus2013binning}. This works because GPU SMs and CPU cores are connected via crossbar or ring — disabling a unit does not create a topological "hole."
-- **Discard (mesh-connected, edge only):** Tilera's TILE-Gx72 (8×9 on-chip mesh, 5 physical networks, XY routing) performs yield binning by fusing off **edge** cores to produce lower SKUs (72→36→16→9 cores). However, an interior router defect forces the **entire die to be discarded** — there is no mechanism to route around an interior hole in the mesh \cite{tilera2013tilegx}.
-- **Spare + remap (mesh-connected, interior):** Cerebras WSE provisions ~1.5–7% spare cores across the wafer. A proprietary, undisclosed algorithm routes around defective cores and links, exposing a regular 2D mesh to users \cite{luczynski2024reduce, cerebras2025sigops}. Tesla Dojo D1 similarly reserves 6 of 360 cores (1.7%) as spares \cite{talpes2023dojo}.
-
-**Key observation:** Discard/bin works when compute units are independent or crossbar-connected. For **mesh-connected** architectures, interior defects break dimension-order routing — the only options are to discard the defective region or to remap around it.
-
-**But discarding fails catastrophically at wafer scale.** For a $W \times W$ physical mesh with i.i.d. node defect probability $p$, the largest defect-free $s \times s$ sub-mesh has expected side length (see `reference/max_spacing_derivations.md` for full derivation):
-
-$$s^* \approx \sqrt{\frac{2 \ln W}{p}}$$
-
-This follows from a threshold argument: an $s \times s$ sub-mesh survives with probability $(1-p)^{s^2}$, and there are $(W-s+1)^2$ possible placements. Setting the expected count of surviving sub-meshes to 1 and solving gives the formula above.
-
-**Concrete impact:** For a Cerebras-class mesh ($W = 750$, $p = 0.01$):
-
-$$s^* \approx \sqrt{\frac{2 \ln 750}{0.01}} = \sqrt{\frac{2 \times 6.62}{0.01}} \approx 36$$
-
-Out of a 750×750 = 562,500-node mesh, the largest guaranteed defect-free square is only ~36×36 = 1,296 nodes — **0.23% utilization**. The discard approach wastes >99.7% of healthy silicon.
-
-| $W$ | $p$ | $s^*$ (side) | $s^{*2}/W^2$ (utilization) |
-|-----|-----|-------------|---------------------------|
-| 100 | 1% | 30 | 9.0% |
-| 500 | 1% | 35 | 0.49% |
-| 750 | 1% | 36 | 0.23% |
-| 750 | 5% | 16 | 0.046% |
-
-The critical scaling: $s^*$ grows only as $\sqrt{\ln W}$ — essentially flat — while the total mesh area grows as $W^2$. Increasing the physical mesh barely helps the discard approach.
-
-**Cerebras's solution: remap and expose regularity.** Rather than discarding, the Cerebras WSE uses redundant links and a proprietary remapping process to route around defects, exposing a regular 2D mesh to the user \cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization (>93% of cores active) but the algorithm is undisclosed — it cannot be reproduced, analyzed, or extended by the research community. Furthermore, the remapping only restores regularity; it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
+**Cerebras's solution: redundant links + hardware remap.** Rather than discarding defective regions, the Cerebras WSE provisions spare cores and redundant fabric links. A proprietary algorithm routes around defects to expose a regular 2D mesh to software \cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization (>93% of cores active), but the algorithm is undisclosed and cannot be reproduced or extended. Furthermore, it only restores regularity — it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
 
 ### 2.2 AI Inference on Wafer-Scale Mesh Architectures
 
@@ -123,7 +93,15 @@ This reflects a fundamental compute–communication trade-off: adding cores redu
 1. **Optimal mesh size is workload-dependent.** For a given model and sequence length, there exists an optimal $M \times M$ partition — smaller than the full wafer — beyond which adding cores hurts. The remapper must carve out *right-sized* virtual meshes, not just the largest possible one.
 2. **Remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off. A workload-aware remapper can target the right operating point by minimizing hop stretch for critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV). We formalize this with an analytical model in §6.1.
 
-Together, §2.1 and §2.2 establish the two dimensions of our problem: defects fragment the physical mesh (making contiguous regular regions scarce), while AI inference workloads demand right-sized, communication-efficient mesh partitions. Addressing both simultaneously requires the remapping framework we present next.
+### 2.3 Opportunity: Workload-Aware Remapping
+
+§2.1 establishes that defects are inevitable at wafer scale and that they seriously degrade mesh performance — even a small defect rate fragments the physical substrate, leaving only a tiny fraction usable as contiguous regular mesh. §2.2 shows that AI inference workloads have phase-specific communication requirements (GEMM for prefill, GEMV for decode) and that performance is sensitive to mesh sizing and layout quality. Together, these observations motivate a remapping approach that operates at three levels:
+
+1. **Remap over defective mesh to expose regular virtual topology, with deadlock-free routing.** Rather than discarding defective regions or relying on proprietary hardware remapping, we map a virtual regular mesh onto all healthy nodes of the defective physical substrate — recovering the >99% of cores that discard-based approaches abandon. Remapping onto irregular physical paths introduces the risk of cyclic channel dependencies (deadlock); our framework guarantees deadlock freedom via a submesh-hierarchy routing scheme, making the remapped topology safe for production use.
+
+2. **Optimize remapping for workload communication patterns.** A topology-only remapping (like Cerebras's regularity restoration) ignores the workload running on the mesh. Since prefill and decode have fundamentally different communication patterns — systolic nearest-neighbor shifts (GEMM) vs. broadcast/reduce trees (GEMV) — the remapper should minimize hop stretch along the edges that matter most for each phase. This enables right-sized virtual partitions optimized for each inference stage.
+
+3. **Exploit redundant resources to further mitigate remapping overhead.** Remapping onto a defective substrate inevitably introduces some performance overhead (increased hop count, link contention). Current industrial solutions hide spare cores, extra links (e.g., diagonal connections), and additional virtual channels behind a regular facade. Instead of concealing these resources, our remapper exposes and utilizes them — diagonal links as routing shortcuts to reduce hop count, spare cores as additional compute, and extra channels for routing flexibility — actively compensating for the remapping overhead.
 
 ---
 
@@ -159,6 +137,60 @@ Together, §2.1 and §2.2 establish the two dimensions of our problem: defects f
 | Yield binning | NVIDIA GA102, AMD Zen 3 | Over-provision compute units, fuse off defective ones, sell as different SKUs \cite{nvidia2020ga102, gamersnexus2013binning} |
 | Edge discard | Tilera TILE-Gx72 | Fuse off edge cores in mesh to produce lower SKUs; discard die on interior defect \cite{tilera2013tilegx} |
 | Spare cores + remap | Cerebras WSE, Tesla Dojo D1 | Provision ~1.5–7% spare cores; remap around defects to expose regular mesh \cite{luczynski2024reduce, cerebras2025sigops, talpes2023dojo} |
+
+</details>
+
+<details>
+<summary>Archived: Defect Tolerance Details (removed during §2.1 rewrite — for ASPLOS appendix or detailed version)</summary>
+
+**Bathtub Curve defect taxonomy (full version):**
+
+Defects in semiconductor manufacturing follow the Bathtub Curve — high infant mortality, a stable useful-life period, then increasing wear-out failures:
+
+**Extrinsic defects (manufacturing-induced)** are present from fabrication and comprise two sub-types:
+
+- **Random defects** arise from stochastic contamination (particles, micro-scratches, cleanroom noise). They are spatially uncorrelated with a stable mean density per unit area \cite{xu2022wafermap}. The industry-standard yield model is the **negative binomial** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$, where $D_0$ is defect density, $A$ is die area, and $\alpha$ captures defect clustering (earlier models by Murphy \cite{murphy1964} and Seeds \cite{seeds1967} are special cases; see Cunningham \cite{cunningham1990} for a comprehensive comparison). As area $A$ grows, $Y_R \to 0$ — at wafer scale, zero-defect fabrication is essentially impossible.
+
+- **Systematic defects** are spatially correlated failures from process variations (lithographic limits, CMP non-uniformity, etch loading, thermal gradients). They produce recognizable wafer map signatures — Edge-Ring, Center, Scratch, Local, Donut — each diagnostic of a specific process root cause \cite{xu2022wafermap}. At advanced nodes (sub-7nm), systematic defects surpass random defects as the primary yield concern \cite{semiengineering2024systematic}.
+
+**Intrinsic defects (wear-out)** emerge over time as devices degrade: electromigration (EM), gate oxide breakdown (TDDB), hot carrier injection (HCI), and bias temperature instability (BTI). These cause cores and links that were healthy at boot time to fail during operation.
+
+At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement. Extrinsic defects are known at manufacturing/boot time and can be addressed by static remapping; intrinsic wear-out motivates future work on online remapping (§8.2).
+
+**Yield decomposition:**
+
+The overall die yield $Y = Y_M \cdot Y_S \cdot Y_R$ — each factor compounds, and all decrease with die area $A$.
+
+**Tilera edge-discard example:**
+
+Tilera's TILE-Gx72 (8×9 on-chip mesh, 5 physical networks, XY routing) performs yield binning by fusing off **edge** cores to produce lower SKUs (72→36→16→9 cores). However, an interior router defect forces the **entire die to be discarded** — there is no mechanism to route around an interior hole in the mesh \cite{tilera2013tilegx}.
+
+**Maximum defect-free sub-mesh proof ($s^*$):**
+
+For a $W \times W$ physical mesh with i.i.d. node defect probability $p$, the largest defect-free $s \times s$ sub-mesh has expected side length (see `reference/max_spacing_derivations.md` for full derivation):
+
+$$s^* \approx \sqrt{\frac{2 \ln W}{p}}$$
+
+This follows from a threshold argument: an $s \times s$ sub-mesh survives with probability $(1-p)^{s^2}$, and there are $(W-s+1)^2$ possible placements. Setting the expected count of surviving sub-meshes to 1 and solving gives the formula above.
+
+**Concrete impact:** For a Cerebras-class mesh ($W = 750$, $p = 0.01$):
+
+$$s^* \approx \sqrt{\frac{2 \ln 750}{0.01}} = \sqrt{\frac{2 \times 6.62}{0.01}} \approx 36$$
+
+Out of a 750×750 = 562,500-node mesh, the largest guaranteed defect-free square is only ~36×36 = 1,296 nodes — **0.23% utilization**. The discard approach wastes >99.7% of healthy silicon.
+
+| $W$ | $p$ | $s^*$ (side) | $s^{*2}/W^2$ (utilization) |
+|-----|-----|-------------|---------------------------|
+| 100 | 1% | 30 | 9.0% |
+| 500 | 1% | 35 | 0.49% |
+| 750 | 1% | 36 | 0.23% |
+| 750 | 5% | 16 | 0.046% |
+
+The critical scaling: $s^*$ grows only as $\sqrt{\ln W}$ — essentially flat — while the total mesh area grows as $W^2$. Increasing the physical mesh barely helps the discard approach.
+
+**Tesla Dojo D1 reference:**
+
+Tesla Dojo D1 similarly reserves 6 of 360 cores (1.7%) as spares \cite{talpes2023dojo}.
 
 </details>
 
