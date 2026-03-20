@@ -27,17 +27,44 @@ Hook → Problem → Insight → Contributions → Results snapshot.
 
 ## 2. Background & Motivation (~1.5 pages)
 
-### 2.1 Defects Are Inevitable
-- Semiconductor defect bathtub curve: early-life (infant mortality) + wear-out (aging/electromigration).
+### 2.1 Defect Types in Semiconductor Manufacturing
+
+Defects in semiconductor manufacturing are inherently unavoidable and can be categorized into two primary regimes based on the Bathtub Curve:
+
+**Extrinsic defects (early-life / manufacturing-induced)** dominate during fabrication and early operation. They comprise two sub-types:
+
+- **Random defects** arise from stochastic contamination — particles landing on the wafer, micro-scratches from handling, or cleaning-room environmental noise. They are spatially uncorrelated (i.i.d. across die sites), with a stable mean density per unit area. On wafer maps, they appear as the "None" pattern — scattered defective grains with no discernible spatial structure \cite{xu2022wafermap}. A progression of yield models has been developed to capture these defects with increasing fidelity:
+    - **Poisson model** \cite{murphy1964}: $Y = e^{-D_0 A}$ — assumes defects are uniformly distributed across the wafer. Simple but systematically underestimates yield because real defects tend to cluster spatially.
+    - **Murphy's model** \cite{murphy1964}: $Y = \left(\frac{1 - e^{-D_0 A}}{D_0 A}\right)^2$ — introduced a probability distribution over defect density to account for wafer-to-wafer variation, improving accuracy over pure Poisson.
+    - **Seeds' model** \cite{seeds1967}: $Y = e^{-\sqrt{D_0 A}}$ — an empirically-motivated model that better fits observed yields at moderate defect densities.
+    - **Negative binomial model** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$ — incorporates defect clustering via the cluster parameter $\alpha$ (smaller $\alpha$ = more clustering). Derived by Stapper et al. using a compound Poisson distribution with gamma-distributed defect density. This became the industry-standard model; Cunningham (1990) \cite{cunningham1990} provides a comprehensive evaluation of these models.
+
+  As die/wafer area $A$ grows, all models predict $Y_R \to 0$ — at wafer scale, the probability of zero random defects approaches zero.
+
+- **Systematic defects** are repeatable, spatially correlated failures caused by process-induced variations — lithographic pattern fidelity limits, CMP non-uniformity, etch loading, wafer warpage, thermal gradients during annealing, or reticle contamination. Unlike random defects, they produce recognizable spatial signatures on wafer maps: **Edge-Ring** (thermal non-uniformity at wafer periphery), **Center** (CMP pressure imbalance), **Scratch** (mechanical handling), **Local** (localized process excursion), and **Donut** (edge-to-center process gradient) \cite{xu2022wafermap}. These patterns are diagnostic — each maps to a specific equipment or process root cause, and experienced engineers can identify the failing step from the spatial signature alone. At older technology nodes, random defects dominated yield loss; at advanced nodes (sub-7nm), systematic yield issues now supplant random defects as the primary concern \cite{semiengineering2024systematic}. Lithographic marginalities produce metal islands causing shorts/opens; contact spacing variations create middle-of-line failures; and edge-band effects can cause >5% die loss at the wafer periphery.
+
+**Intrinsic defects (wear-out / aging-induced degradation)** represent time-dependent reliability failures, where devices that passed initial screening eventually degrade due to fundamental physical limits:
+- **Electromigration (EM):** momentum transfer from current-carrying electrons gradually displaces metal atoms in interconnects, forming voids (open circuits) or hillocks (shorts). Accelerated by high current density and temperature; becomes worse at smaller wire cross-sections.
+- **Gate oxide breakdown (TDDB — Time-Dependent Dielectric Breakdown):** progressive charge trapping in the gate dielectric creates a conductive path through the oxide, eventually causing permanent gate-to-channel shorts. Thinner oxides at advanced nodes accelerate this mechanism.
+- **Hot carrier injection (HCI)**, **bias temperature instability (BTI)**, and **stress migration** further contribute to gradual parametric drift and eventual hard failure.
+
+**Implications for our work:**
+- **Extrinsic defects** (both random and systematic) are known at manufacturing/boot time — the remapper can compute a static mapping once. Random defects produce the spatially uniform i.i.d. fault model used in most prior topology reconfiguration work (including Zhang et al.) and in our baseline experiments. Systematic defects produce spatially correlated fault clusters — entire rows, rings, or zones of adjacent cores may fail together, creating larger "holes" in the physical mesh. Our hierarchical RCB partitioning naturally adapts to both: it partitions around defect-dense regions regardless of whether the pattern is random or clustered.
+- **Intrinsic wear-out** creates faults that emerge during operation — cores, routers, or links that were healthy at boot time may fail later. This motivates future work on online/incremental remapping (§8.2), but the offline remapping framework we present is the necessary foundation.
+- At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement.
+
+### 2.2 Defects Are Inevitable: Scale Makes It Certain
+- Semiconductor defect bathtub curve: extrinsic failures dominate early life, intrinsic wear-out dominates late life, with a stable useful-life period in between.
+- The overall die yield $Y = Y_M \cdot Y_S \cdot Y_R$ (material-limited × systematic-limited × random-limited) — each factor compounds, and all decrease with die area.
 - At wafer scale, defect probability per chip approaches 1 — defect tolerance is not optional, it is a design requirement.
 
-### 2.2 Regular Topology Is a Software Requirement
+### 2.3 Regular Topology Is a Software Requirement
 - High-performance kernels (systolic GEMM, broadcast+reduce GEMV) are designed for regular 2D mesh:
   - Uniform neighbor count enables systolic dataflow.
   - Dimension-order routing gives deterministic latency.
   - Programming models assume a clean coordinate space.
 
-### 2.3 Symmetric vs. Asymmetric Topologies
+### 2.4 Symmetric vs. Asymmetric Topologies
 - **Symmetric topologies (e.g., Clos):** fault tolerance is nearly solved.
   - All middle-stage switches are functionally interchangeable — losing one merely reduces path diversity.
   - Acyclic structure means rerouting never causes deadlock; at worst, congestion.
@@ -51,7 +78,7 @@ Hook → Problem → Insight → Contributions → Results snapshot.
   - The remapping problem (embedding a virtual regular mesh into a faulty physical mesh) is NP-hard (reduces from subgraph isomorphism).
   - No prior work addresses remapping at large scale (>128 nodes) with workload awareness and deadlock-free routing.
 
-### 2.4 Industry Practice: Spare Cores and Yield Binning
+### 2.5 Industry Practice: Spare Cores and Yield Binning
 Modern chips universally over-provision and disable defective units. Concrete examples:
 
 **GPUs (SM/CU harvesting — yield binning to lower SKUs):**
@@ -80,7 +107,7 @@ Modern chips universally over-provision and disable defective units. Concrete ex
 
 **Key observation:** Discard/bin works when units are independent or crossbar-connected (GPUs, CPUs). It fails for **mesh-connected** architectures where a disabled interior node creates an irregular topology that breaks dimension-order routing.
 
-### 2.5 Limitations of Current Approaches
+### 2.6 Limitations of Current Approaches
 | Approach | Mechanism | Limitation |
 |----------|-----------|------------|
 | Yield binning (NVIDIA, AMD, Intel) | Over-provision, fuse off defective SMs/CUs/cores, sell as lower SKU | Only works for independent/crossbar-connected units; not applicable to mesh-connected architectures |
@@ -88,7 +115,7 @@ Modern chips universally over-provision and disable defective units. Concrete ex
 | Software discard | Use largest defect-free rectangular sub-mesh | Abandons healthy-but-irregular silicon; utilization drops sharply at higher defect rates |
 | Topology reconfiguration (Zhang et al.) | Remap virtual mesh onto faulty physical mesh | Small scale (<128), no workload awareness, no routing guarantee |
 
-### 2.5 Quantifying the Cost of Discard
+### 2.7 Quantifying the Cost of Discard
 
 > **TODO: Derive a model for the expected largest defect-free k×k sub-mesh in an N×N grid given i.i.d. defect probability p.**
 >
@@ -107,7 +134,7 @@ Modern chips universally over-provision and disable defective units. Concrete ex
 >
 > This is the **quantitative motivation** for the entire paper — make the gap between discard and remapping visually obvious.
 
-### 2.6 Our Goal
+### 2.8 Our Goal
 Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh — preserving the regular programming model while maximizing utilization, optimizing for the target workload, and guaranteeing deadlock-free routing.
 
 ---

@@ -342,6 +342,84 @@
 }
 
 %% ============================================================
+%% Defect Types & Wafer Map Classification
+%% ============================================================
+
+@article{murphy1964,
+  author = "B. T. Murphy",
+  title = "Cost-Size Optima of Monolithic Integrated Circuits",
+  journal = "Proceedings of the IEEE",
+  volume = "52",
+  number = "12",
+  pages = "1537--1545",
+  year = "1964",
+  doi = "10.1109/PROC.1964.3442",
+  note = "Introduced yield models relating defect density to die area; proposed probability distribution over D0 to account for spatial variation (Murphy's model)"
+}
+
+@inproceedings{seeds1967,
+  author = "R. B. Seeds",
+  title = "Yield, Economic, and Logistic Models of Complex Digital Arrays",
+  booktitle = "IEEE International Convention Record",
+  year = "1967",
+  pages = "60--61",
+  note = "Empirical yield model Y = exp(-sqrt(D0*A)); intermediate between Poisson and Murphy models"
+}
+
+@article{stapper1983,
+  author = "C. H. Stapper and F. M. Armstrong and K. Saji",
+  title = "Integrated Circuit Yield Statistics",
+  journal = "Proceedings of the IEEE",
+  volume = "71",
+  number = "4",
+  pages = "453--470",
+  year = "1983",
+  doi = "10.1109/PROC.1983.12615",
+  note = "Derived negative binomial yield model Y = (1 + D0*A/alpha)^(-alpha) using compound Poisson with gamma-distributed defect density; alpha captures defect clustering"
+}
+
+@article{cunningham1990,
+  author = "J. A. Cunningham",
+  title = "The Use and Evaluation of Yield Models in Integrated Circuit Manufacturing",
+  journal = "IEEE Transactions on Semiconductor Manufacturing",
+  volume = "3",
+  number = "2",
+  pages = "60--71",
+  year = "1990",
+  doi = "10.1109/66.53188",
+  note = "Comprehensive evaluation of Poisson, Murphy, Seeds, and negative binomial yield models; discusses limitations of cluster parameter alpha"
+}
+
+@article{xu2022wafermap,
+  author = "Qiao Xu and Naigong Yu and Firdaous Essaf",
+  title = "Improved Wafer Map Inspection Using Attention Mechanism and Cosine Normalization",
+  journal = "Machines",
+  volume = "10",
+  number = "2",
+  pages = "146",
+  year = "2022",
+  publisher = "MDPI",
+  doi = "10.3390/machines10020146",
+  note = "Classifies wafer defect patterns (None/Edge-Ring/Edge-Local/Center/Local/Scratch/Random/Donut/Near-Full) from WM-811K dataset; None pattern = random defects, others = systematic process-correlated patterns"
+}
+
+@phdthesis{chao2009waferdefect,
+  author = "Li-Chang Chao",
+  title = "Constructing a Wafer Defect Diagnostic System by Integrating Yield Prediction and Defect Pattern Recognition",
+  school = "National Chiao Tung University",
+  year = "2009",
+  address = "Hsinchu, Taiwan",
+  note = "Yield models for clustered defects; GRNN + multi-class SVM for defect pattern classification; demonstrates Poisson model underestimates yield when defects cluster"
+}
+
+@online{semiengineering2024systematic,
+  author = "Mark LaPedus",
+  title = "Systematic Yield Issues Now Top Priority At Advanced Nodes",
+  year = "2024",
+  url = "https://semiengineering.com/systematic-yield-issues-now-top-priority-at-advanced-nodes/",
+  note = "At sub-7nm nodes, systematic defects (lithographic marginalities, CMP, etch loading) supplant random defects as dominant yield concern; edge-band patterns can cause >5\\% die loss"
+}
+
 %% LaTeX
 %% ============================================================
 
