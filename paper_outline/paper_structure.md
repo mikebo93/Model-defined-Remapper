@@ -7,21 +7,31 @@
 
 ## 1. Introduction (~1.5 pages)
 
-Hook → Problem → Insight → Contributions → Results snapshot.
+**P1 — The setting: wafer-scale mesh for AI inference.**
+Wafer-scale 2D mesh architectures (Cerebras WSE: ~900K cores, chiplet interposers) have emerged as the dominant substrate for large-scale AI workloads. Their planar, nearest-neighbor interconnect scales naturally with silicon area and supports the structured communication patterns (systolic data flow, broadcast/reduce) that AI inference demands. As model sizes grow, so does the pressure to use every available core efficiently.
 
-- **Hook:** Large-scale 2D mesh architectures (wafer-scale chips, chiplet interposers) are the dominant substrate for high-performance computing, but manufacturing defects are inevitable — and worsen with scale and aging.
-- **Current mitigations and their costs:**
-  - Hardware redundancy (spare cores/links): fixed at design time, wastes area/power, and may be insufficient at high defect rates (e.g., Cerebras WSE reserves ~1–7% spare cores).
-  - Software discard (use largest defect-free sub-mesh): abandons usable-but-irregular silicon.
-- **Industrial evidence of the need:** Cerebras confirms software-level remapping to restore regular mesh \cite{cerebras2025sigops}, and a Cerebras co-authored paper states "a proprietary process will route around [defects]" \cite{luczynski2024reduce} — but the algorithm is undisclosed. Defect-tolerant remapping is industrially critical yet remains an open problem in the literature.
-- **The gap:** High-performance kernels (GEMM, GEMV) require regular topology, but no existing approach efficiently remaps an irregular/faulty physical mesh into a virtual regular one at scale with deadlock-free routing guarantees.
-- **Our insight:** Decouple virtual topology from physical topology via a *model-defined remapper* — applications see a regular mesh while the remapper transparently maps it onto all healthy resources in a defective physical substrate.
-- **Contributions** (4 bullets, one sentence each):
-  1. A hierarchical virtual-to-physical topology remapping framework that scales to 512×512 meshes.
-  2. A deadlock-free routing scheme for irregular post-remapping topologies via submesh hierarchy routing.
-  3. Exploitation of underutilized routing resources (diagonal links) through cross-topology remapping.
-  4. Comprehensive evaluation across scales, fault rates, and workloads (GEMM, GEMV).
-- **Results teaser:** Key quantitative highlights (fill in after experiments finalize).
+**P2 — The workload insight: right-sized mesh matters.**
+LLM inference is not monolithic — it decomposes into two phases with fundamentally different characteristics. Prefill processes the full input prompt via GEMM (compute-bound, high arithmetic intensity); decode generates tokens one at a time via GEMV (memory-bandwidth-bound, low arithmetic intensity). Crucially, optimal performance requires *right-sized* mesh partitions for each phase — WaferLLM \cite{he2025waferllm} demonstrates on Cerebras hardware that decode throughput can actually *decrease* when scaling to more cores, because communication overhead outweighs the computational benefit. The disaggregated inference trend \cite{zhong2024distserve, patel2024splitwise} formalizes this by separating prefill and decode onto differently-sized hardware partitions.
+
+**P3 — The defect problem: you can't get the mesh you need.**
+But manufacturing defects are inevitable at wafer scale. Even at a modest 1% defect rate, the largest contiguous defect-free mesh on a 750×750 wafer covers only ~0.23% of available cores (§2.1). Defects fragment the physical substrate — the right-sized mesh for a given workload may simply not exist as a contiguous region.
+
+**P4 — Why current solutions aren't enough.**
+Industry addresses defects through yield binning (NVIDIA, AMD), edge discard (Tilera), and spare-core remapping (Cerebras, Tesla Dojo). Cerebras's approach is the most sophisticated: a proprietary algorithm routes around defects to expose a regular 2D mesh to software \cite{cerebras2025sigops, luczynski2024reduce}. However, the algorithm is undisclosed and cannot be reproduced or extended. Moreover, it only restores regularity — it does not optimize for workload-specific communication patterns, and it conceals redundant resources (spare cores, diagonal links) that could improve performance rather than merely restoring a regular topology.
+
+**P5 — Our approach.**
+We propose a **workload-aware remapping framework** that:
+1. **Maps right-sized virtual meshes** onto a defective physical substrate, tailored to each inference stage's communication pattern (systolic GEMM for prefill, broadcast/reduce GEMV for decode).
+2. **Utilizes redundant resources** — rather than hiding spare cores and links behind a regular facade, the remapper exposes and exploits them (e.g., diagonal links as routing shortcuts) to improve performance beyond what regularity restoration alone achieves.
+3. **Guarantees deadlock-free routing** on the resulting irregular physical topology — without this, any remapping is unusable in practice, as irregular paths can introduce cyclic channel dependencies that cause permanent message blocking.
+
+**P6 — Contributions:**
+1. A hierarchical virtual-to-physical topology remapping framework that scales to 512×512 meshes with workload-aware cost optimization for disaggregated AI inference.
+2. A deadlock-free routing scheme for irregular post-remapping topologies via submesh hierarchy routing (ascend-then-descend, requiring only ≥2 virtual channels).
+3. Exploitation of underutilized routing resources (diagonal links) through cross-topology remapping, turning redundancy overhead into a performance advantage.
+4. Comprehensive evaluation across scales (64×64 to 512×512), fault rates (1%–15%), and workloads (GEMM, GEMV), demonstrating [X%] utilization improvement over discard-based approaches with [Y%] of healthy-mesh performance.
+
+**Results teaser:** Key quantitative highlights (fill in after experiments finalize).
 
 ---
 
@@ -31,29 +41,17 @@ Hook → Problem → Insight → Contributions → Results snapshot.
 
 #### 2.1.1 Defect Types
 
-Defects in semiconductor manufacturing are inherently unavoidable and can be categorized into two primary regimes based on the Bathtub Curve:
+Defects in semiconductor manufacturing follow the Bathtub Curve — high infant mortality, a stable useful-life period, then increasing wear-out failures:
 
-**Extrinsic defects (early-life / manufacturing-induced)** dominate during fabrication and early operation. They comprise two sub-types:
+**Extrinsic defects (manufacturing-induced)** are present from fabrication and comprise two sub-types:
 
-- **Random defects** arise from stochastic contamination — particles landing on the wafer, micro-scratches from handling, or cleaning-room environmental noise. They are spatially uncorrelated (i.i.d. across die sites), with a stable mean density per unit area. On wafer maps, they appear as the "None" pattern — scattered defective grains with no discernible spatial structure \cite{xu2022wafermap}. A progression of yield models has been developed to capture these defects with increasing fidelity:
-    - **Poisson model** \cite{murphy1964}: $Y = e^{-D_0 A}$ — assumes defects are uniformly distributed across the wafer. Simple but systematically underestimates yield because real defects tend to cluster spatially.
-    - **Murphy's model** \cite{murphy1964}: $Y = \left(\frac{1 - e^{-D_0 A}}{D_0 A}\right)^2$ — introduced a probability distribution over defect density to account for wafer-to-wafer variation, improving accuracy over pure Poisson.
-    - **Seeds' model** \cite{seeds1967}: $Y = e^{-\sqrt{D_0 A}}$ — an empirically-motivated model that better fits observed yields at moderate defect densities.
-    - **Negative binomial model** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$ — incorporates defect clustering via the cluster parameter $\alpha$ (smaller $\alpha$ = more clustering). Derived by Stapper et al. using a compound Poisson distribution with gamma-distributed defect density. This became the industry-standard model; Cunningham (1990) \cite{cunningham1990} provides a comprehensive evaluation of these models.
+- **Random defects** arise from stochastic contamination (particles, micro-scratches, cleanroom noise). They are spatially uncorrelated with a stable mean density per unit area \cite{xu2022wafermap}. The industry-standard yield model is the **negative binomial** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$, where $D_0$ is defect density, $A$ is die area, and $\alpha$ captures defect clustering (earlier models by Murphy \cite{murphy1964} and Seeds \cite{seeds1967} are special cases; see Cunningham \cite{cunningham1990} for a comprehensive comparison). As area $A$ grows, $Y_R \to 0$ — at wafer scale, zero-defect fabrication is essentially impossible.
 
-  As die/wafer area $A$ grows, all models predict $Y_R \to 0$ — at wafer scale, the probability of zero random defects approaches zero.
+- **Systematic defects** are spatially correlated failures from process variations (lithographic limits, CMP non-uniformity, etch loading, thermal gradients). They produce recognizable wafer map signatures — Edge-Ring, Center, Scratch, Local, Donut — each diagnostic of a specific process root cause \cite{xu2022wafermap}. At advanced nodes (sub-7nm), systematic defects surpass random defects as the primary yield concern \cite{semiengineering2024systematic}.
 
-- **Systematic defects** are repeatable, spatially correlated failures caused by process-induced variations — lithographic pattern fidelity limits, CMP non-uniformity, etch loading, wafer warpage, thermal gradients during annealing, or reticle contamination. Unlike random defects, they produce recognizable spatial signatures on wafer maps: **Edge-Ring** (thermal non-uniformity at wafer periphery), **Center** (CMP pressure imbalance), **Scratch** (mechanical handling), **Local** (localized process excursion), and **Donut** (edge-to-center process gradient) \cite{xu2022wafermap}. These patterns are diagnostic — each maps to a specific equipment or process root cause, and experienced engineers can identify the failing step from the spatial signature alone. At older technology nodes, random defects dominated yield loss; at advanced nodes (sub-7nm), systematic yield issues now supplant random defects as the primary concern \cite{semiengineering2024systematic}. Lithographic marginalities produce metal islands causing shorts/opens; contact spacing variations create middle-of-line failures; and edge-band effects can cause >5% die loss at the wafer periphery.
+**Intrinsic defects (wear-out)** emerge over time as devices degrade: electromigration (EM), gate oxide breakdown (TDDB), hot carrier injection (HCI), and bias temperature instability (BTI). These cause cores and links that were healthy at boot time to fail during operation.
 
-**Intrinsic defects (wear-out / aging-induced degradation)** represent time-dependent reliability failures, where devices that passed initial screening eventually degrade due to fundamental physical limits:
-- **Electromigration (EM):** momentum transfer from current-carrying electrons gradually displaces metal atoms in interconnects, forming voids (open circuits) or hillocks (shorts). Accelerated by high current density and temperature; becomes worse at smaller wire cross-sections.
-- **Gate oxide breakdown (TDDB — Time-Dependent Dielectric Breakdown):** progressive charge trapping in the gate dielectric creates a conductive path through the oxide, eventually causing permanent gate-to-channel shorts. Thinner oxides at advanced nodes accelerate this mechanism.
-- **Hot carrier injection (HCI)**, **bias temperature instability (BTI)**, and **stress migration** further contribute to gradual parametric drift and eventual hard failure.
-
-**Implications for our work:**
-- **Extrinsic defects** (both random and systematic) are known at manufacturing/boot time — the remapper can compute a static mapping once. Random defects produce the spatially uniform i.i.d. fault model used in most prior topology reconfiguration work (including Zhang et al.) and in our baseline experiments. Systematic defects produce spatially correlated fault clusters — entire rows, rings, or zones of adjacent cores may fail together, creating larger "holes" in the physical mesh. Our hierarchical RCB partitioning naturally adapts to both: it partitions around defect-dense regions regardless of whether the pattern is random or clustered.
-- **Intrinsic wear-out** creates faults that emerge during operation — cores, routers, or links that were healthy at boot time may fail later. This motivates future work on online/incremental remapping (§8.2), but the offline remapping framework we present is the necessary foundation.
-- At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement.
+At wafer scale (Cerebras WSE: 46,225 mm² die area), all defect types are present — defect tolerance is not optional, it is a design requirement. Extrinsic defects are known at manufacturing/boot time and can be addressed by static remapping; intrinsic wear-out motivates future work on online remapping (§8.2).
 
 #### 2.1.2 Overcoming Defects: Redundancy and Its Limits
 
@@ -90,41 +88,105 @@ The critical scaling: $s^*$ grows only as $\sqrt{\ln W}$ — essentially flat �
 
 **Cerebras's solution: remap and expose regularity.** Rather than discarding, the Cerebras WSE uses redundant links and a proprietary remapping process to route around defects, exposing a regular 2D mesh to the user \cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization (>93% of cores active) but the algorithm is undisclosed — it cannot be reproduced, analyzed, or extended by the research community. Furthermore, the remapping only restores regularity; it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
 
-#### 2.1.3 Limitations of Current Approaches
+### 2.2 AI Inference on Wafer-Scale Mesh Architectures
+
+#### 2.2.1 Disaggregated AI Inference: Prefill and Decode
+
+**Distributed inference on 2D mesh.** To serve large language models (LLMs) at scale, a model is partitioned across accelerator cores using parallelism strategies — data parallelism (DP), tensor/model parallelism (MP), pipeline parallelism (PP), sequence parallelism (SP), and expert parallelism (EP) \cite{shoeybi2019megatron, narayanan2021efficient, lepikhin2021gshard}. On a 2D mesh, these strategies map onto the mesh dimensions: MP typically partitions along one axis (requiring all-reduce among neighbors in that dimension), while PP pipelines across the other axis (point-to-point between adjacent stages). The mesh topology directly constrains which parallelism configurations are efficient — communication-heavy strategies like MP require low-hop neighbors, making the physical layout of cores critical.
+
+> **[FIGURE PLACEHOLDER — §2.2 Figure: Prefill vs. Decode Inference Flow]**
+> Left: Prefill phase — full input sequence processed in parallel; dominated by GEMM (matrix × matrix); compute-bound, high arithmetic intensity.
+> Right: Decode phase — tokens generated one at a time (autoregressive); dominated by GEMV (matrix × vector); memory-bandwidth-bound, low arithmetic intensity.
+> Bottom: Show how a model is distributed across a 2D mesh with MP along columns and PP along rows (or similar), with communication arrows indicating the dominant data flow pattern for each phase.
+
+**Prefill vs. Decode phases.** LLM inference consists of two distinct phases with fundamentally different computational characteristics:
+
+- **Prefill phase:** Processes the entire input prompt in parallel. The dominant operation is **GEMM** (matrix–matrix multiplication) — projecting all input tokens through the model's weight matrices simultaneously. This phase is **compute-bound** with high arithmetic intensity, and its communication pattern is nearest-neighbor systolic data flow (well-suited to regular 2D mesh topologies).
+
+- **Decode phase:** Generates output tokens one at a time, autoregressively. Each step performs a **GEMV** (matrix–vector multiplication) — the KV-cache matrix is large but the "query" is a single token vector. This phase is **memory-bandwidth-bound** with low arithmetic intensity, and its communication pattern involves broadcast (distributing the query vector) and reduce (aggregating partial results) across the mesh.
+
+**Why disaggregation?** Because prefill and decode have opposite resource requirements (compute-bound vs. memory-bound), running them on the same hardware wastes resources — prefill underutilizes memory bandwidth while decode underutilizes compute \cite{zhong2024distserve, patel2024splitwise}. **Disaggregated inference** separates these phases onto different hardware partitions, each sized and optimized for its workload:
+
+- Prefill clusters: dense compute, optimized for high-throughput GEMM.
+- Decode clusters: high memory bandwidth, optimized for low-latency GEMV with large KV-caches.
+
+#### 2.2.2 More Cores ≠ Better Performance on Wafer-Scale Mesh
+
+Wafer-scale systems like the Cerebras WSE offer hundreds of thousands of cores connected via a 2D mesh — an unprecedented amount of parallelism. A natural expectation is that allocating more cores to an inference workload always improves performance. **This is not the case.**
+
+He et al. \cite{he2025waferllm} demonstrate on the Cerebras WSE that decode throughput can actually *decrease* when scaling to more cores, because the additional NoC communication latency outweighs the computational benefit. For GEMM, scaling from 540×540 to 720×720 cores shows diminishing returns: computational cycles decrease but communication overhead from additional shifting rounds negates the gains. The root cause is the highly non-uniform memory access latency across the mesh — remote cores incur multi-hop latency that grows with mesh diameter.
+
+This reflects a fundamental compute–communication trade-off: adding cores reduces per-core computation but increases communication overhead (more hops, more link contention). On a healthy mesh, there is a sweet spot — an optimal mesh size $M^*$ for each workload. On a defective mesh after remapping, virtual neighbors may be multiple physical hops apart, worsening communication overhead and shifting the sweet spot further. The *quality* of the remapping — how well it preserves locality — directly determines performance.
+
+**This observation has two implications:**
+
+1. **Optimal mesh size is workload-dependent.** For a given model and sequence length, there exists an optimal $M \times M$ partition — smaller than the full wafer — beyond which adding cores hurts. The remapper must carve out *right-sized* virtual meshes, not just the largest possible one.
+2. **Remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off. A workload-aware remapper can target the right operating point by minimizing hop stretch for critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV). We formalize this with an analytical model in §6.1.
+
+Together, §2.1 and §2.2 establish the two dimensions of our problem: defects fragment the physical mesh (making contiguous regular regions scarce), while AI inference workloads demand right-sized, communication-efficient mesh partitions. Addressing both simultaneously requires the remapping framework we present next.
+
+---
+
+> **Archived subsections** (moved from §2 during restructuring — retained for reference, may be incorporated into §3 or §7):
+
+<details>
+<summary>Archived: Detailed Yield Models and Defect Type Details (condensed from §2.1.1 — for ASPLOS appendix)</summary>
+
+**Full yield model progression (random defects):**
+- **Poisson model** \cite{murphy1964}: $Y = e^{-D_0 A}$ — assumes defects are uniformly distributed across the wafer. Simple but systematically underestimates yield because real defects tend to cluster spatially.
+- **Murphy's model** \cite{murphy1964}: $Y = \left(\frac{1 - e^{-D_0 A}}{D_0 A}\right)^2$ — introduced a probability distribution over defect density to account for wafer-to-wafer variation, improving accuracy over pure Poisson.
+- **Seeds' model** \cite{seeds1967}: $Y = e^{-\sqrt{D_0 A}}$ — an empirically-motivated model that better fits observed yields at moderate defect densities.
+- **Negative binomial model** \cite{stapper1983}: $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$ — incorporates defect clustering via the cluster parameter $\alpha$ (smaller $\alpha$ = more clustering). Derived by Stapper et al. using a compound Poisson distribution with gamma-distributed defect density. This became the industry-standard model; Cunningham (1990) \cite{cunningham1990} provides a comprehensive evaluation of these models.
+
+**Detailed systematic defect patterns:** Edge-Ring (thermal non-uniformity at wafer periphery), Center (CMP pressure imbalance), Scratch (mechanical handling), Local (localized process excursion), Donut (edge-to-center process gradient) \cite{xu2022wafermap}. Each maps to a specific equipment or process root cause. Lithographic marginalities produce metal islands causing shorts/opens; contact spacing variations create middle-of-line failures; edge-band effects can cause >5% die loss at the wafer periphery.
+
+**Detailed intrinsic defect mechanisms:**
+- **Electromigration (EM):** momentum transfer from current-carrying electrons gradually displaces metal atoms in interconnects, forming voids (open circuits) or hillocks (shorts). Accelerated by high current density and temperature; becomes worse at smaller wire cross-sections.
+- **Gate oxide breakdown (TDDB — Time-Dependent Dielectric Breakdown):** progressive charge trapping in the gate dielectric creates a conductive path through the oxide, eventually causing permanent gate-to-channel shorts. Thinner oxides at advanced nodes accelerate this mechanism.
+- **Hot carrier injection (HCI)**, **bias temperature instability (BTI)**, and **stress migration** further contribute to gradual parametric drift and eventual hard failure.
+
+**Implications for our work (removed from §2.1.1 to avoid premature design references):**
+- **Extrinsic defects** (both random and systematic) are known at manufacturing/boot time — the remapper can compute a static mapping once. Random defects produce the spatially uniform i.i.d. fault model used in most prior topology reconfiguration work (including Zhang et al.) and in our baseline experiments. Systematic defects produce spatially correlated fault clusters — entire rows, rings, or zones of adjacent cores may fail together, creating larger "holes" in the physical mesh. Our hierarchical RCB partitioning naturally adapts to both: it partitions around defect-dense regions regardless of whether the pattern is random or clustered.
+- **Intrinsic wear-out** creates faults that emerge during operation — cores, routers, or links that were healthy at boot time may fail later. This motivates future work on online/incremental remapping (§8.2), but the offline remapping framework we present is the necessary foundation.
+
+</details>
+
+<details>
+<summary>Archived: Summary of Industrial Defect Tolerance Mechanisms (formerly §2.1.3)</summary>
+
+| Approach | Example | Mechanism |
+|----------|---------|-----------|
+| Yield binning | NVIDIA GA102, AMD Zen 3 | Over-provision compute units, fuse off defective ones, sell as different SKUs \cite{nvidia2020ga102, gamersnexus2013binning} |
+| Edge discard | Tilera TILE-Gx72 | Fuse off edge cores in mesh to produce lower SKUs; discard die on interior defect \cite{tilera2013tilegx} |
+| Spare cores + remap | Cerebras WSE, Tesla Dojo D1 | Provision ~1.5–7% spare cores; remap around defects to expose regular mesh \cite{luczynski2024reduce, cerebras2025sigops, talpes2023dojo} |
+
+</details>
+
+<details>
+<summary>Archived: The Compute–Communication Trade-Off Details (formerly §2.2.3)</summary>
+
+The WaferLLM observation reflects a fundamental trade-off in mesh-based parallel computing: adding more cores to a fixed-size workload reduces per-core computation but increases communication overhead. Each core holds a smaller data partition, so it finishes computing faster — but it must exchange data with neighbors over more hops, and the mesh becomes more congested as paths from different cores overlap on shared physical links.
+
+On a **healthy mesh**, this creates a sweet spot: an optimal mesh size $M^*$ that minimizes total execution time for a given workload. Going beyond $M^*$ hurts rather than helps.
+
+On a **defective mesh after remapping**, the trade-off worsens. Virtual neighbors that were one hop apart on the ideal mesh may be multiple physical hops apart after remapping around defects. This extra hop stretch increases communication latency and link contention, pushing the sweet spot toward fewer cores. The *quality* of the remapping — how well it preserves locality between communicating virtual neighbors — directly determines how much performance is lost relative to the healthy baseline.
+
+**This is why remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off — using more cores but performing worse. A workload-aware remapper can target the right operating point by minimizing hop stretch for the workload's critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV).
+
+</details>
+
+<details>
+<summary>Archived: Limitations of Current Industrial Approaches (formerly §2.1.3)</summary>
 
 | Approach | Mechanism | Limitation |
 |----------|-----------|------------|
 | Yield binning (NVIDIA, AMD, Intel) | Over-provision, fuse off defective SMs/CUs/cores, sell as lower SKU | Only works for independent/crossbar-connected units; not applicable to mesh-connected architectures |
 | Edge discard (Tilera TILE-Gx) | Fuse off edge cores; discard die on interior defect | Cannot tolerate interior faults in mesh topology |
 | Spare cores + proprietary remap (Cerebras WSE) | ~1.5% spare cores; undisclosed algorithm routes around defects \cite{luczynski2024reduce, cerebras2025sigops} | Algorithm not published; does not optimize for workload or exploit diagonal links |
-| Software discard | Use largest defect-free rectangular sub-mesh | Catastrophic utilization loss at wafer scale (see §2.1.2: 0.23% for W=750, p=1%) |
-| Topology reconfiguration (Zhang et al.) | Remap virtual mesh onto faulty physical mesh | Small scale (<128), no workload awareness, no routing guarantee |
 
-**This motivates our work:** a transparent, workload-aware remapping framework that uses *all* healthy nodes (typically >90% at 7% defect rate), not just the ~0.2% that form a contiguous defect-free square — with provable deadlock-free routing guarantees.
+**The gap:** No existing industrial solution provides an open, workload-aware remapping algorithm for mesh-connected architectures. Yield binning and edge discard cannot handle interior mesh defects. Cerebras's approach achieves high utilization but is proprietary and topology-unaware — it restores a regular mesh without optimizing for specific workloads or exploiting underutilized routing resources (e.g., diagonal links).
 
-### 2.2 Disaggregated AI Inference
-
-> TODO: Fill in content for disaggregated AI inference background.
-
-**Prefill vs. Decode phases.** Modern large language model (LLM) inference consists of two distinct phases with fundamentally different computational characteristics:
-
-- **Prefill phase:** Processes the entire input prompt in parallel. This phase is **compute-bound** — it performs a large matrix multiplication (GEMM) over all input tokens simultaneously, achieving high arithmetic intensity and high utilization of compute units. The communication pattern is systolic (nearest-neighbor data flow), well-suited to regular 2D mesh topologies.
-
-- **Decode phase:** Generates output tokens one at a time, autoregressively. Each step performs a matrix-vector multiplication (GEMV) — the KV-cache is large but the "query" is a single token. This phase is **memory-bandwidth-bound** with low arithmetic intensity, and its communication pattern involves broadcast (distributing the query vector) and reduce (aggregating partial results) operations across the mesh.
-
-**Why disaggregation?** Because prefill and decode have opposite resource requirements (compute-bound vs. memory-bound), running them on the same hardware wastes resources — prefill underutilizes memory bandwidth while decode underutilizes compute. **Disaggregated inference** separates these phases onto different hardware partitions, each sized and optimized for its workload:
-
-- Prefill clusters: dense compute, optimized for high-throughput GEMM.
-- Decode clusters: high memory bandwidth, optimized for low-latency GEMV with large KV-caches.
-
-**Relevance to our work:** On a wafer-scale mesh with defects, the remapper must carve out two types of virtual sub-meshes from the same faulty physical substrate — one optimized for GEMM (prefill) and another for GEMV (decode). This is a natural extension of workload-aware remapping: the cost function weights communication patterns differently for each phase, and the hierarchical partitioning can allocate distinct physical regions to each virtual partition. Defect tolerance becomes even more critical in this setting, as both partitions must be simultaneously viable on the same defective wafer.
-
-### 2.3 Our Goal
-Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh — preserving the regular programming model while maximizing utilization, optimizing for disaggregated AI inference workloads (prefill GEMM and decode GEMV), and guaranteeing deadlock-free routing.
-
----
-
-> **Archived subsections** (moved from §2 during restructuring — retained for reference, may be incorporated into §3 or §7):
+</details>
 
 <details>
 <summary>Archived: Regular Topology Is a Software Requirement (formerly §2.2)</summary>
@@ -252,7 +314,7 @@ Remap a virtual regular mesh onto *all* healthy nodes of a faulty physical mesh 
 
 ### 6.1 Analytical Performance Model
 
-Establish a latency model to frame the experimental results and explain the remapper's trade-off.
+> Note: The core performance model and U-shape trade-off are now introduced in §2.2.3 as motivation. This section provides the full parameterization and uses it to frame experimental results.
 
 **Transmission time decomposition:**
 ```
