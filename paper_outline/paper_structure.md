@@ -45,7 +45,7 @@ Given that inevitable defects cause serious mesh performance degradation (§2.1)
 
 > **[FIGURE PLACEHOLDER — §2.1 Figure: Defects and Mesh Fragmentation]**
 > Left: Bathtub curve — extrinsic (manufacturing) → useful life → intrinsic (wear-out), annotating static remapping vs. future online remapping.
-> Right: Utilization plot — x-axis: mesh size $W$, y-axis: max defect-free sub-mesh utilization $s^{*2}/W^2$, curves for defect rates 2%, 4%, 6%, 8%, 10%. Shows catastrophic utilization collapse at wafer scale. (Formal derivation of $s^* \approx \sqrt{2 \ln W / p}$ in Appendix.)
+> Right: Utilization plot — x-axis: mesh size $W$, y-axis: max defect-free sub-mesh utilization $s^{*2}/W^2$, curves for defect rates 1%, 2%, 4%, 6%, 8%, 10%. Shows catastrophic utilization collapse at wafer scale. (Formal derivation of $s^* \approx \sqrt{2 \ln W / p}$ in Appendix.)
 
 **GPUs and CPUs overcome defects through yield binning.** NVIDIA's GA102 die has 84 SMs but ships the RTX 3090 with 82 and RTX 3080 with 68 — chips with more defective SMs are sold as lower-tier SKUs (Stock Keeping Units) \cite{nvidia2020ga102}. AMD similarly bins Zen 3 CCDs from 8 to 6 cores \cite{gamersnexus2013binning}. This works because GPU SMs are independently connected to the memory system through a GPC–memory partition interconnect \cite{nvidia2020ga102} — disabling one SM does not affect routing or communication for remaining SMs.
 
@@ -60,52 +60,62 @@ Given that inevitable defects cause serious mesh performance degradation (§2.1)
 
 ### 2.2 AI Inference on Wafer-Scale Mesh Architectures
 
+Having established the physical substrate and its defect challenges, we now examine the AI inference workloads that run on it — and why their structure makes remapping quality critical.
+
 #### 2.2.1 Disaggregated AI Inference: Prefill and Decode
-
-**Distributed inference on 2D mesh.** To serve large language models (LLMs) at scale, a model is partitioned across accelerator cores using parallelism strategies — data parallelism (DP), tensor/model parallelism (MP), pipeline parallelism (PP), sequence parallelism (SP), and expert parallelism (EP) \cite{shoeybi2019megatron, narayanan2021efficient, lepikhin2021gshard}. On a 2D mesh, these strategies map onto the mesh dimensions: MP typically partitions along one axis (requiring all-reduce among neighbors in that dimension), while PP pipelines across the other axis (point-to-point between adjacent stages). The mesh topology directly constrains which parallelism configurations are efficient — communication-heavy strategies like MP require low-hop neighbors, making the physical layout of cores critical.
-
-> **[FIGURE PLACEHOLDER — §2.2 Figure: Prefill vs. Decode Inference Flow]**
-> Left: Prefill phase — full input sequence processed in parallel; dominated by GEMM (matrix × matrix); compute-bound, high arithmetic intensity.
-> Right: Decode phase — tokens generated one at a time (autoregressive); dominated by GEMV (matrix × vector); memory-bandwidth-bound, low arithmetic intensity.
-> Bottom: Show how a model is distributed across a 2D mesh with MP along columns and PP along rows (or similar), with communication arrows indicating the dominant data flow pattern for each phase.
 
 **Prefill vs. Decode phases.** LLM inference consists of two distinct phases with fundamentally different computational characteristics:
 
-- **Prefill phase:** Processes the entire input prompt in parallel. The dominant operation is **GEMM** (matrix–matrix multiplication) — projecting all input tokens through the model's weight matrices simultaneously. This phase is **compute-bound** with high arithmetic intensity, and its communication pattern is nearest-neighbor systolic data flow (well-suited to regular 2D mesh topologies).
+- **Prefill phase:** Processes the entire input prompt in parallel. The dominant operation is **GEMM** (matrix–matrix multiplication) — projecting all input tokens through the model's weight matrices simultaneously. This phase is **compute-bound** with high arithmetic intensity.
 
-- **Decode phase:** Generates output tokens one at a time, autoregressively. Each step performs a **GEMV** (matrix–vector multiplication) — the KV-cache matrix is large but the "query" is a single token vector. This phase is **memory-bandwidth-bound** with low arithmetic intensity, and its communication pattern involves broadcast (distributing the query vector) and reduce (aggregating partial results) across the mesh.
+- **Decode phase:** Generates output tokens one at a time, autoregressively. Each step performs a **GEMV** (matrix–vector multiplication) — the KV-cache matrix is large but the "query" is a single token vector. This phase is **memory-bandwidth-bound** with low arithmetic intensity.
 
-**Why disaggregation?** Because prefill and decode have opposite resource requirements (compute-bound vs. memory-bound), running them on the same hardware wastes resources — prefill underutilizes memory bandwidth while decode underutilizes compute \cite{zhong2024distserve, patel2024splitwise}. **Disaggregated inference** separates these phases onto different hardware partitions, each sized and optimized for its workload:
+Because prefill and decode have opposite resource requirements (compute-bound vs. memory-bound), running them on the same hardware wastes resources. **Disaggregated inference** separates these phases onto different hardware partitions, each sized and optimized for its workload \cite{zhong2024distserve, patel2024splitwise}.
 
-- Prefill clusters: dense compute, optimized for high-throughput GEMM.
-- Decode clusters: high memory bandwidth, optimized for low-latency GEMV with large KV-caches.
+> **[FIGURE PLACEHOLDER — §2.2 Figure: Prefill vs. Decode Inference Flow]**
+> Left: Prefill phase — full input sequence processed in parallel; dominated by GEMM; compute-bound.
+> Right: Decode phase — tokens generated autoregressively; dominated by GEMV; memory-bandwidth-bound.
+> Bottom: Show how weights are spread across a regular 2D mesh, with communication arrows for each phase.
+
+**Running inference on wafer-scale 2D mesh.** To accelerate these workloads, wafer-scale systems spread each layer's weights and activations across a regular 2D mesh. WaferLLM \cite{he2025waferllm} 2D-tiles each layer's weight matrix across the full mesh (both matrix dimensions mapped to the two mesh axes), with all cores collaborating on one layer via cyclic-shift GEMM (nearest-neighbor systolic data flow) or broadcast-reduce GEMV. Cerebras also supports other execution modes: **Weight Streaming** (weights stored off-chip in MemoryX, streamed layer-by-layer) for models exceeding on-chip capacity, and **Layer Pipelined** (each layer mapped to a rectangular submesh) for smaller models \cite{lie2023cerebras}. Our work targets the on-chip execution model, where weights reside in distributed SRAM and the mesh topology directly governs communication cost.
 
 #### 2.2.2 More Cores ≠ Better Performance on Wafer-Scale Mesh
 
 Wafer-scale systems like the Cerebras WSE offer hundreds of thousands of cores connected via a 2D mesh — an unprecedented amount of parallelism. A natural expectation is that allocating more cores to an inference workload always improves performance. **This is not the case.**
 
-He et al. \cite{he2025waferllm} demonstrate on the Cerebras WSE that decode throughput can actually *decrease* when scaling to more cores, because the additional NoC communication latency outweighs the computational benefit. For GEMM, scaling from 540×540 to 720×720 cores shows diminishing returns: computational cycles decrease but communication overhead from additional shifting rounds negates the gains. The root cause is the highly non-uniform memory access latency across the mesh — remote cores incur multi-hop latency that grows with mesh diameter.
+The two inference phases scale very differently with mesh size \cite{he2025waferllm}:
 
-This reflects a fundamental compute–communication trade-off: adding cores reduces per-core computation but increases communication overhead (more hops, more link contention). On a healthy mesh, there is a sweet spot — an optimal mesh size $M^*$ for each workload. On a defective mesh after remapping, virtual neighbors may be multiple physical hops apart, worsening communication overhead and shifting the sweet spot further. The *quality* of the remapping — how well it preserves locality — directly determines performance.
+- **GEMV (decode) can degrade when cores are too many.** Because decode is memory-bandwidth-bound, the per-core computation is already small. As the mesh grows, each core's local work shrinks further while the allreduce communication tree deepens — more hops, more latency. Beyond an optimal mesh size, communication dominates >90% of total latency, and adding more cores actually *increases* end-to-end decode time.
 
-**This observation has two implications:**
+- **GEMM (prefill) still benefits from more cores.** Because prefill is compute-bound, the heavy matrix–matrix computation dominates over communication. WaferLLM's cyclic-shift algorithm bounds the critical communication path per shift step to a constant 2 hops regardless of mesh size, so compute time reduction outweighs the communication overhead — achieving >70% computational efficiency even at 720×720 cores. However, for small matrices, communication overhead can still dominate.
+
+WaferLLM confirms this asymmetry in practice: for LLaMA3-8B, it uses 660×660 cores for prefill but only 360×360 for decode — nearly 3.4× fewer cores for the memory-bound phase. This has two implications:
 
 1. **Optimal mesh size is workload-dependent.** For a given model and sequence length, there exists an optimal $M \times M$ partition — smaller than the full wafer — beyond which adding cores hurts. The remapper must carve out *right-sized* virtual meshes, not just the largest possible one.
-2. **Remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off. A workload-aware remapper can target the right operating point by minimizing hop stretch for critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV). We formalize this with an analytical model in §6.1.
+2. **Remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off. A workload-aware remapper can target the right operating point by minimizing hop stretch for critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV). On a defective mesh, this is even more critical — remapped virtual neighbors may be multiple physical hops apart, further worsening communication overhead. We formalize this with an analytical model in §6.1.
+
+**Why not simply use small defect-free meshes?** For small models and short contexts, a modest mesh may suffice — but for large batch sizes, long context lengths, and large models, the aggregate SRAM across many cores is needed to store KV-cache and model weights (WaferLLM cannot fit CodeLLaMA-34B or QWen2-72B in a single WSE-2's memory \cite{he2025waferllm}). Even the memory-bound decode phase still requires a substantial mesh for storage capacity. On a defective wafer, these right-sized partitions may not exist as contiguous defect-free regions — making workload-aware *remapping*, not just partitioning, essential.
 
 ### 2.3 Opportunity: Workload-Aware Remapping
 
 §2.1 establishes that defects are inevitable at wafer scale and that they seriously degrade mesh performance — even a small defect rate fragments the physical substrate, leaving only a tiny fraction usable as contiguous regular mesh. §2.2 shows that AI inference workloads have phase-specific communication requirements (GEMM for prefill, GEMV for decode) and that performance is sensitive to mesh sizing and layout quality. Together, these observations motivate a remapping approach that operates at three levels:
 
-1. **Remap over defective mesh to expose regular virtual topology, with deadlock-free routing.** Rather than discarding defective regions or relying on proprietary hardware remapping, we map a virtual regular mesh onto all healthy nodes of the defective physical substrate — recovering the >99% of cores that discard-based approaches abandon. Remapping onto irregular physical paths introduces the risk of cyclic channel dependencies (deadlock); our framework guarantees deadlock freedom via a submesh-hierarchy routing scheme, making the remapped topology safe for production use.
+1. **Remap over defective mesh to expose regular virtual topology, with deadlock-free routing.** Rather than discarding defective regions or relying on proprietary hardware remapping, we map a virtual regular mesh onto all healthy nodes of the defective physical substrate — recovering the >99% of cores that discard-based approaches abandon (§2.1: at 1% defect rate, discard yields only 0.23% utilization). Remapping onto irregular physical paths introduces the risk of cyclic channel dependencies (deadlock); our framework guarantees deadlock freedom via a submesh-hierarchy routing scheme, making the remapped topology safe for production use.
 
-2. **Optimize remapping for workload communication patterns.** A topology-only remapping (like Cerebras's regularity restoration) ignores the workload running on the mesh. Since prefill and decode have fundamentally different communication patterns — systolic nearest-neighbor shifts (GEMM) vs. broadcast/reduce trees (GEMV) — the remapper should minimize hop stretch along the edges that matter most for each phase. This enables right-sized virtual partitions optimized for each inference stage.
+2. **Optimize remapping for workload communication patterns.** A topology-only remapping (like Cerebras's regularity restoration) ignores the workload running on the mesh. As WaferLLM demonstrates (§2.2.2), performance is highly sensitive to mesh sizing and communication layout — decode throughput can *decrease* with more cores. Since prefill and decode have fundamentally different communication patterns — systolic nearest-neighbor shifts (GEMM) vs. broadcast/reduce trees (GEMV) — the remapper should minimize hop stretch along the edges that matter most for each phase. This enables right-sized virtual partitions optimized for each inference stage.
 
-3. **Exploit redundant resources to further mitigate remapping overhead.** Remapping onto a defective substrate inevitably introduces some performance overhead (increased hop count, link contention). Current industrial solutions hide spare cores, extra links (e.g., diagonal connections), and additional virtual channels behind a regular facade. Instead of concealing these resources, our remapper exposes and utilizes them — diagonal links as routing shortcuts to reduce hop count, spare cores as additional compute, and extra channels for routing flexibility — actively compensating for the remapping overhead.
+3. **Exploit redundant resources to further mitigate remapping overhead.** Remapping onto a defective substrate inevitably introduces some performance overhead (increased hop count, link contention). Current industrial solutions hide spare cores, extra links (e.g., diagonal connections), and additional virtual channels behind a regular facade — the Cerebras WSE, for instance, has 24 virtual channels and diagonal fabric links that are concealed from software (§2.1). Instead of concealing these resources, our remapper exposes and utilizes them — diagonal links as routing shortcuts to reduce hop count, spare cores as additional compute, and extra channels for routing flexibility — actively compensating for the remapping overhead.
 
 ---
 
 > **Archived subsections** (moved from §2 during restructuring — retained for reference, may be incorporated into §3 or §7):
+
+<details>
+<summary>Archived: Parallelism Strategy Taxonomy (removed from §2.2.1 — general background, not wafer-specific)</summary>
+
+To serve large language models (LLMs) at scale, a model is partitioned across accelerator cores using parallelism strategies — primarily tensor/model parallelism (MP), pipeline parallelism (PP), and data parallelism (DP), with sequence parallelism (SP) and expert parallelism (EP) for specific scenarios \cite{shoeybi2019megatron, narayanan2021efficient, lepikhin2021gshard}.
+
+</details>
 
 <details>
 <summary>Archived: Detailed Yield Models and Defect Type Details (condensed from §2.1.1 — for ASPLOS appendix)</summary>
@@ -252,28 +262,43 @@ On a **defective mesh after remapping**, the trade-off worsens. Virtual neighbor
 
 ## 3. Challenges (~0.75 page)
 
-> **Structural note:** Each challenge below maps 1:1 to a design component in §4. This makes each design decision feel motivated by a concrete, named problem.
+> **Structural note:** Challenges are ordered by dependency: correctness (can we do this safely?) → quality (can we do this well?) → practicality (can we do this at scale?). Each maps to a design component in §4.
 
-### 3.1 Scalability → addressed by §4.2 Hierarchical Spatial Search
-- The remapping problem is a constrained subgraph isomorphism variant → NP-hard.
-- Exact algorithms (Ullmann 1976, VF2 2004, VF3 2017) have exponential worst-case complexity. They work well for small pattern graphs (tens of nodes) but are completely intractable for meshes with 10K–260K+ nodes.
-  - *Ullmann:* backtracking with refinement; O(n! · m^n) worst case.
-  - *VF2/VF3:* state-space search with pruning; still exponential, designed for graphs with ≤10K nodes in practice.
-- Simulated annealing (Zhang et al. TVLSI 2009) and memetic algorithms (Qian et al. 2024) improve over exact methods but remain too slow at wafer scale due to their iterative global search.
-- **Need:** a hierarchical heuristic that decomposes the problem spatially for near-linear scaling.
+### 3.1 Deadlock-Free Routing on Irregular Topology → addressed by §4.4–4.5
 
-### 3.2 Application Specificity → addressed by §4.3 Workload-Aware Cost Function
-- Topology-only cost metrics (minimize total hop count) ignore the actual workload.
-- If two virtual nodes never communicate, their physical distance is irrelevant.
-- GEMM (systolic) has strict nearest-neighbor communication; GEMV (broadcast+reduce) has a different pattern with long-range collective operations.
-- **Need:** a workload-aware cost function that weights mapping quality by actual communication volume.
+> **[FIGURE PLACEHOLDER — §3.1 Figure: Routing Hazards After Remapping]**
+> Left: A small virtual mesh (e.g., 3×3) with a single virtual hop A→B shown as one link. Middle: After remapping onto a defective physical mesh, the same virtual hop A→B becomes a multi-hop physical detour around a faulty node. A virtual communication spanning multiple hops (A→B→C) is the concatenation of two physical detours. Right: The concatenated path revisits a physical node — show (a) cyclic channel dependency between two intersecting paths (deadlock), and (b) a path cycle where a packet re-enters a node and fans out again (broadcast storm / infinite duplication).
 
-### 3.3 Routing Correctness → addressed by §4.4–4.5 Static Routing + Submesh Hierarchy
-- **Deadlock:** Intersecting routing paths can create cyclic *channel* dependencies in the CDG → messages block forever waiting for each other.
-- **Infinite duplication (even for unicast):** If a routing path visits the same physical node twice (a cycle in the *path*, not the CDG), the stateless static routing table at that node cannot distinguish first visit from second. Since it must encode output ports for both visits, every arrival fans out to all ports → the cycle produces copies that return and fan out again → exponential duplication, never terminates. This is the same mechanism as a broadcast storm but triggered by path cycles, not multicast fan-out.
-- **Multicast amplification:** For multicast operations (e.g., GEMV broadcast/reduce), the problem compounds — branch intersection at a router duplicates flits from converging branches, each of which may themselves cycle.
-- On an irregular post-remapping topology, standard dimension-order routing (XY) may not be applicable — some XY paths may traverse faulty nodes.
-- **Need:** a routing scheme that (a) finds valid physical paths for all virtual communications, (b) guarantees acyclic CDG (deadlock freedom), and (c) guarantees cycle-free paths per node (no node visited twice) to prevent infinite duplication.
+Remapping a virtual mesh onto a defective physical mesh fundamentally changes the routing structure. On the original (defect-free) mesh, each virtual link is a single physical hop, and dimension-order routing (XY) is trivially deadlock-free. After remapping, a single virtual hop between two virtual neighbors may map to a **multi-hop physical path** that detours around faulty nodes. A virtual communication that traverses several virtual hops now becomes the **concatenation** of these multi-hop physical segments. Crucially, the individual segments may each be valid, but their concatenation can revisit physical nodes and physical channels in arbitrary order — destroying the monotonic channel usage that made XY routing safe.
+
+This concatenation mechanism is the root cause of three correctness hazards:
+
+- **Deadlock (cyclic channel dependency):** When multiple virtual communications are mapped to concatenated multi-hop physical paths, their physical segments may share and contend for the same physical channels in opposing directions. These intersections create cyclic dependencies in the channel dependency graph (CDG) — messages block forever waiting for each other. The Dally-Seitz theorem \cite{dally1987deadlock} establishes that deadlock freedom requires an acyclic CDG, but the concatenation of independently-routed segments provides no such guarantee.
+- **Infinite duplication (path cycles from concatenation):** Because each virtual hop maps to a different physical detour, the concatenated end-to-end path can visit the same physical node twice. At that node, the stateless routing table cannot distinguish first visit from second — every arrival fans out to all encoded output ports. The cycle produces copies that return and fan out again, causing exponential packet duplication that never terminates (a "broadcast storm").
+- **Multicast amplification:** For multicast operations (e.g., GEMV broadcast/reduce), branch intersections at a router duplicate flits from converging branches, each of which may themselves contain concatenation-induced cycles — compounding the duplication problem exponentially.
+
+Existing approaches either avoid the problem entirely (SpiNNaker: migrate tasks instead of rerouting; Cerebras: proprietary solution) or provide only partial guarantees (up*/down* routing limits path diversity). **Need:** a routing scheme that (a) finds valid physical paths for all virtual communications, (b) guarantees acyclic CDG (deadlock freedom), and (c) guarantees cycle-free paths (no node visited twice) to prevent infinite duplication.
+
+### 3.2 Workload-Aware Mapping Quality → addressed by §4.2–4.3
+
+Even with correct routing, the *quality* of the virtual-to-physical mapping determines performance. The mapping problem is a constrained subgraph embedding — formally, finding an injective function $f: V_v \to V_p$ that minimizes a cost function over all virtual edges. This generalizes subgraph isomorphism and is NP-hard \cite{rost2020hardness}.
+
+The challenge is not just computational hardness but *what to optimize*:
+
+- **Topology-only cost is insufficient.** Minimizing total hop count treats all virtual edges equally. But if two virtual nodes never communicate, their physical distance is irrelevant. Conversely, edges on the critical path of a systolic GEMM must be as short as possible.
+- **Different workloads need different mappings.** GEMM (systolic) has strict nearest-neighbor row/column shifts where hop uniformity is critical for synchronization. GEMV (broadcast+reduce) has long-range collective operations where tree depth and fan-in balance matter more than individual hop counts. In Mixture-of-Experts (MoE) layers, only a subset of experts activate per token — expert placement on the mesh creates input-dependent, non-uniform traffic patterns where poorly placed experts become congestion hotspots.
+
+**Need:** a workload-aware cost function that weights mapping quality by actual communication volume and pattern, separately tunable for prefill (GEMM) and decode (GEMV). We show in §6 that a topology-only mapping can lose significant performance compared to a workload-aware one.
+
+### 3.3 Scalability to Wafer-Scale Meshes → addressed by §4.2 Hierarchical Spatial Search
+
+Given that the mapping problem is NP-hard (§3.2), exact algorithms are infeasible at wafer scale:
+
+- **Exact subgraph matching** (Ullmann 1976, VF2 2004, VF3 2017) has exponential worst-case complexity. These methods work for small pattern graphs (tens of nodes) but are intractable for meshes with hundreds of thousands of nodes.
+- **Metaheuristics** — simulated annealing (Zhang et al. \cite{zhang2009topology}) and memetic algorithms (Qian et al. \cite{qian2024memetic}) — improve over exact methods but remain too slow at wafer scale due to iterative global search. Zhang et al. report results only up to 128 nodes.
+- **The search space is vast.** The Cerebras WSE-3 has 900K cores \cite{lie2023cerebras}. Even after removing defective nodes, the number of candidate placements for a virtual mesh of tens of thousands of nodes onto a physical substrate of hundreds of thousands of healthy nodes is astronomically large.
+
+**Need:** a hierarchical heuristic that decomposes the problem spatially, reducing per-node search from $O(M)$ (exhaustive over physical mesh) to $O(\log M)$ (KdTree-indexed), enabling near-linear scaling to 512×512+ meshes.
 
 ---
 
