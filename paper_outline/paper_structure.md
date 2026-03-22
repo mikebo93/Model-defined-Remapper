@@ -94,7 +94,7 @@ WaferLLM confirms this asymmetry in practice: for LLaMA3-8B, it uses 660×660 co
 1. **Optimal mesh size is workload-dependent.** For a given model and sequence length, there exists an optimal $M \times M$ partition — smaller than the full wafer — beyond which adding cores hurts. The remapper must carve out *right-sized* virtual meshes, not just the largest possible one.
 2. **Remapping quality matters, not just utilization.** A naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the trade-off. A workload-aware remapper can target the right operating point by minimizing hop stretch for critical communication edges (systolic shifts for GEMM, broadcast/reduce trees for GEMV). On a defective mesh, this is even more critical — remapped virtual neighbors may be multiple physical hops apart, further worsening communication overhead. We formalize this with an analytical model in §6.1.
 
-**Why not simply use small defect-free meshes?** For small models and short contexts, a modest mesh may suffice — but for large batch sizes, long context lengths, and large models, the aggregate SRAM across many cores is needed to store KV-cache and model weights (WaferLLM cannot fit CodeLLaMA-34B or QWen2-72B in a single WSE-2's memory \cite{he2025waferllm}). Even the memory-bound decode phase still requires a substantial mesh for storage capacity. On a defective wafer, these right-sized partitions may not exist as contiguous defect-free regions — making workload-aware *remapping*, not just partitioning, essential.
+**Why not simply use small defect-free meshes?** For small models and short contexts, a modest mesh may suffice — but for large batch sizes, long context lengths, and large models, the aggregate SRAM across many cores is needed to store KV-cache and model weights (WaferLLM cannot fit CodeLLaMA-34B or QWen2-72B in a single WSE-2's memory \cite{he2025waferllm}). Even the memory-bound decode phase still requires a substantial mesh for storage capacity. Moreover, intrinsic wear-out (§2.1) means defect counts grow over time — a mesh that meets a workload's size requirement today may not tomorrow. On a defective wafer, right-sized partitions may not exist as contiguous defect-free regions, and this problem only worsens with device aging — making workload-aware *remapping*, not just partitioning, essential.
 
 ### 2.3 Opportunity: Workload-Aware Remapping
 
@@ -294,64 +294,115 @@ The challenge is not just computational hardness but *what to optimize*:
 
 Given that the mapping problem is NP-hard (§3.2), exact algorithms are infeasible at wafer scale:
 
-- **Exact subgraph matching** (Ullmann 1976, VF2 2004, VF3 2017) has exponential worst-case complexity. These methods work for small pattern graphs (tens of nodes) but are intractable for meshes with hundreds of thousands of nodes.
+- **Exact subgraph matching** (Ullmann 1976, VF2 2004, VF3 2017) has exponential worst-case complexity, making it intractable for meshes with hundreds of thousands of nodes. Worse, as defects accumulate, an exact isomorphic match may not even exist — the defective physical mesh may lack any subgraph structurally identical to the desired virtual mesh, rendering exact methods infeasible regardless of compute budget.
 - **Metaheuristics** — simulated annealing (Zhang et al. \cite{zhang2009topology}) and memetic algorithms (Qian et al. \cite{qian2024memetic}) — improve over exact methods but remain too slow at wafer scale due to iterative global search. Zhang et al. report results only up to 128 nodes.
 - **The search space is vast.** The Cerebras WSE-3 has 900K cores \cite{lie2023cerebras}. Even after removing defective nodes, the number of candidate placements for a virtual mesh of tens of thousands of nodes onto a physical substrate of hundreds of thousands of healthy nodes is astronomically large.
 
-**Need:** a hierarchical heuristic that decomposes the problem spatially, reducing per-node search from $O(M)$ (exhaustive over physical mesh) to $O(\log M)$ (KdTree-indexed), enabling near-linear scaling to 512×512+ meshes.
+**Need:** a hierarchical heuristic that decomposes the problem spatially, reducing per-node search from $O(M)$ (exhaustive over physical mesh) to $O(\log M)$ (KdTree-indexed), enabling near-linear scaling to wafer-scale meshes.
 
 ---
 
 ## 4. Design: Model-Defined Remapper (~2.5 pages)
 
 ### 4.1 Overview
-- System architecture diagram: Virtual topology → Remapper → Physical topology + Routing tables.
-- Three-phase pipeline: **Node Mapping → Path Routing → Deadlock Resolution**.
+
+> **[FIGURE PLACEHOLDER — §4.1 Figure: Framework Overview]**
+> End-to-end pipeline diagram. Inputs on the left: (1) Physical mesh with defective nodes marked, (2) Workload description (GEMM/GEMV communication graph). Pipeline stages in the center: **Node Mapping (§4.2)** → **Workload-Aware Cost Evaluation (§4.3)** → **Static Routing (§4.4)** → **Deadlock Resolution (§4.5)**. Output on the right: Virtual mesh mapped onto physical substrate + deadlock-free routing tables. Show feedback loop from cost evaluation back to node mapping (iterative refinement).
+
+The Model-Defined Remapper takes two inputs: a defective physical mesh (with faulty nodes/links identified) and a workload communication graph (encoding GEMM/GEMV traffic patterns). It produces a virtual-to-physical node mapping with deadlock-free routing tables. The pipeline has four stages:
+
+1. **Node Mapping (§4.2):** Hierarchical spatial search finds an injective mapping $f: V \to P$ from virtual to healthy physical nodes, guided by a workload-aware cost function.
+2. **Workload-Aware Cost Evaluation (§4.3):** Scores each candidate mapping by geometric displacement, hop stretch weighted by communication volume, and link congestion.
+3. **Static Deterministic Routing (§4.4):** Computes physical routing paths for all virtual communication edges at mapping time.
+4. **Deadlock Resolution (§4.5):** Enforces acyclic channel dependencies via submesh-hierarchy routing, guaranteeing deadlock freedom and cycle-free paths.
 
 ### 4.2 Node Mapping: Hierarchical Spatial Search
-- **Problem formulation:** Given virtual mesh V and faulty physical mesh P (with defective nodes/links removed), find an injective mapping f: V → P that minimizes a workload-weighted cost.
-- **Approximate graph matching**, not exact isomorphism — we optimize a continuous cost function rather than requiring strict structural preservation.
-- **Phase 1 — Spatial decomposition:**
-  - Recursive Coordinate Bisection (RCB) partitions both V and P into aligned spatial regions.
-  - Reduces global NxN assignment to a set of local sub-problems.
-- **Phase 2 — Coarse mapping via KdTree super nodes:**
-  - Build KdTree over physical nodes; group into super nodes.
-  - Match virtual partitions to physical super nodes by spatial proximity.
-- **Phase 3 — Fine mapping via frontier expansion:**
-  - Within each partition, expand mapping frontier outward from seed nodes.
-  - 2-level hierarchical candidate search: coarse (super node) then fine (individual node).
-  - Parallel candidate evaluation (rayon) for throughput.
-  - **Frontier-based expansion avoids the local minima of pure greedy assignment** — each new mapping decision is informed by the spatial context of already-mapped neighbors.
+
+**Problem formulation:** Given virtual mesh $V$ and faulty physical mesh $P$ (with defective nodes/links removed), find an injective mapping $f: V \to P$ that minimizes a workload-weighted cost. This is approximate graph matching — we optimize a continuous cost function rather than requiring strict structural preservation.
+
+> **[ALGORITHM PLACEHOLDER — Algorithm 1: Hierarchical Spatial Search]**
+> ```
+> Input: Virtual mesh V, Physical mesh P (defects removed), Workload graph W
+> Output: Mapping f: V → P
+>
+> Phase 1 — Spatial Decomposition:
+>   Recursive Coordinate Bisection (RCB) partitions both V and P
+>   into aligned spatial regions → reduces global problem to local sub-problems
+>
+> Phase 2 — Coarse Mapping:
+>   Build KdTree over physical nodes; group into super nodes
+>   Match virtual partitions to physical super nodes by spatial proximity
+>
+> Phase 3 — Fine Mapping via Frontier Expansion:
+>   For each partition:
+>     Expand mapping frontier outward from seed nodes
+>     For each unmapped virtual node on frontier:
+>       2-level candidate search: coarse (super node) → fine (individual node)
+>       Evaluate candidates using workload-aware cost (§4.3)
+>       Select best candidate; update mapping and frontier
+> ```
+
+- **Phase 1 — Spatial decomposition:** Recursive Coordinate Bisection (RCB) partitions both $V$ and $P$ into aligned spatial regions, reducing global $N \times N$ assignment to a set of local sub-problems.
+- **Phase 2 — Coarse mapping via KdTree super nodes:** Build KdTree over physical nodes; group into super nodes. Match virtual partitions to physical super nodes by spatial proximity. Per-node search is $O(\log M)$ instead of $O(M)$.
+- **Phase 3 — Fine mapping via frontier expansion:** Within each partition, expand the mapping frontier outward from seed nodes. Each unmapped virtual node on the frontier is matched via a 2-level hierarchical candidate search: coarse (super node) then fine (individual node). Frontier-based expansion avoids the local minima of pure greedy assignment — each decision is informed by the spatial context of already-mapped neighbors.
 
 ### 4.3 Workload-Aware Cost Function
-- **Coordinate cost:** geometric displacement between virtual and physical positions (RANSAC-based geometric consistency check).
-- **Hop cost:** weighted by link usage (LinkUsage tracking) — penalizes mappings that overload physical links.
+
+The cost function scores candidate mappings along three dimensions:
+
+- **Coordinate cost:** geometric displacement between virtual and physical positions, with RANSAC-based geometric consistency check to reject outlier mappings.
+- **Hop cost:** weighted by link usage — penalizes mappings that overload physical links or create unnecessarily long detours.
 - **Communication cost:** weighted by actual traffic volume from the workload graph (GEMM/GEMV IR).
-  - If two nodes never communicate → zero cost regardless of physical distance.
-  - High-traffic links → heavily penalized if mapped to long physical paths.
+  - If two virtual nodes never communicate → zero cost regardless of physical distance.
+  - High-traffic edges (e.g., systolic shift links in GEMM, broadcast trunk in GEMV) → heavily penalized if mapped to long physical paths.
+
+The cost function is separately tunable for prefill (GEMM-dominated) and decode (GEMV-dominated) workloads, enabling the remapper to produce phase-specific mappings.
 
 ### 4.4 Static Deterministic Routing
-- For each virtual communication edge, compute a physical routing path on the mapped topology.
-- Paths are static (computed once at mapping time) and deterministic (same path every time).
-- **Why static:** enables offline analysis of channel dependencies and eliminates runtime routing overhead.
+
+For each virtual communication edge, the remapper computes a physical routing path on the mapped topology. Paths are:
+- **Static:** computed once at mapping time, not at runtime.
+- **Deterministic:** the same virtual edge always uses the same physical path.
+
+Static routing enables offline analysis of the full channel dependency graph before deployment, and eliminates runtime routing overhead. The routing paths feed into the deadlock resolution stage (§4.5).
 
 ### 4.5 Deadlock-Free Routing via Submesh Hierarchy
-- **Problem:** arbitrary physical paths on an irregular topology can create cycles in the channel dependency graph (CDG).
-- **Solution:** Submesh hierarchy routing with *ascend-then-descend* constraint:
+
+> **[ALGORITHM PLACEHOLDER — Algorithm 2: Submesh-Hierarchy Deadlock Resolution]**
+> ```
+> Input: Mapped physical mesh, Routing paths from §4.4
+> Output: Deadlock-free routing tables with VC assignments
+>
+> Step 1 — Build submesh hierarchy:
+>   Recursively partition mapped physical mesh into hierarchy of submeshes
+>
+> Step 2 — Assign hierarchical levels:
+>   Each physical node belongs to submeshes at multiple levels
+>
+> Step 3 — Route with ascend-then-descend constraint:
+>   For each routing path:
+>     Phase 1 (ascend): route on ascending VC, moving to coarser submeshes
+>     Phase 2 (descend): route on descending VC, moving to finer submeshes
+>     No re-ascent allowed → total order on channel usage → acyclic CDG
+>
+> Step 4 — Verify:
+>   Confirm CDG is acyclic; confirm no path visits any node twice
+> ```
+
+- **Problem:** Arbitrary physical paths on an irregular topology can create cycles in the channel dependency graph (CDG), causing deadlock (§3.1).
+- **Solution:** Submesh-hierarchy routing with *ascend-then-descend* constraint:
   - Partition the mapped physical mesh into a hierarchy of submeshes.
-  - Each routing path first ascends the hierarchy (coarse submeshes), then descends (fine submeshes).
+  - Each routing path first ascends the hierarchy (coarse submeshes) on one VC, then descends (fine submeshes) on another VC.
   - **No re-ascent allowed** → the hierarchical ordering imposes a total order on channel usage → acyclic CDG → deadlock freedom.
-- **Broadcast storm prevention:** deterministic, non-duplicating forwarding — each message follows exactly one path.
+- **Broadcast storm prevention:** Deterministic, non-duplicating forwarding — each message follows exactly one path. Combined with the cycle-free path guarantee (no node visited twice), this eliminates infinite duplication.
 - Works for both 4-connected (standard mesh) and 8-connected (diagonal mesh) topologies.
-- **Hardware requirement: ≥2 virtual channels (VCs).** The submesh hierarchy routing uses separate VCs for ascending and descending phases to guarantee deadlock freedom. This is a conservative assumption — modern architectures with true (general-purpose, reassignable) VCs provide far more:
-  - Cerebras WSE: **24 colors** — true VCs, any color can carry any data, non-blocking, time-multiplexed on same physical link \cite{cerebras2024sdk}
+- **Hardware requirement: ≥2 virtual channels (VCs).** The ascending and descending phases use separate VCs. This is a conservative assumption — modern wafer-scale architectures provide far more:
+  - Cerebras WSE: **24 colors** (true VCs, any color can carry any data) \cite{cerebras2024sdk}
   - Google TPU ICI: **≥2 VCs** for dateline-based deadlock-free torus routing
-  - Cray T3D/T3E, IBM Blue Gene/L: **2 VCs** — the historical minimum for deadlock-free torus routing
-  - Note: Intel mesh (AD/AK/BL/IV rings) and ARM CHI (REQ/RSP/SNP/DAT) use protocol-level virtual *networks*, not true VCs — each network is dedicated to a specific message class and cannot be reassigned for routing. These are not applicable to our argument.
-  - Li et al. (ISCA 2024) prove that all practical coherence protocols require ≥2 virtual networks for deadlock freedom \cite{li2024minvn}.
-  - AMD Infinity Fabric: proprietary, VC count undisclosed (likely ≥2 but unconfirmed). NVIDIA GPU: uses crossbar internally, not mesh — VCs not applicable.
-  - **Adversary case (address proactively in paper):** Real VC-free mesh products exist — Kalray MPPA-256 (turn-model, single die), Tilera TILE-Gx (5 physical nets, single die), Adapteva Epiphany (3 physical nets, multi-chip extensible), SpiNNaker (packet-dropping, 1M cores). But: single-die products discard the entire die on interior defects. Adapteva designed a multi-chip extensible mesh without VCs but **never solved** the hole-in-mesh problem when a chip dies. SpiNNaker tolerates packet loss (unacceptable for deterministic compute). The only products that handle interior defects in multi-die meshes losslessly (Cerebras 24 VCs, TPU ≥2 VCs) all use virtual channels. **≥2 VCs is the inherent cost of remapping over waste.**
-  - See `reference/Virtual_Channels_in_Modern_Hardware.md` for full details and citations.
+  - Historically, 2 VCs is the minimum for deadlock-free torus routing (Cray T3D/T3E, IBM Blue Gene/L)
+  - Li et al. (ISCA 2024) prove that all practical coherence protocols require ≥2 virtual networks for deadlock freedom \cite{li2024minvn}
+
+> **[NOTE — Adversary case to address in paper:]** Real VC-free mesh products exist (Kalray MPPA-256, Tilera TILE-Gx, Adapteva Epiphany, SpiNNaker). However: single-die products discard the entire die on interior defects; Adapteva's multi-chip mesh never solved the hole-in-mesh problem; SpiNNaker tolerates packet loss (unacceptable for deterministic compute). The only products that handle interior mesh defects losslessly (Cerebras 24 VCs, TPU ≥2 VCs) all use virtual channels. **≥2 VCs is the inherent cost of remapping over waste.** See `reference/Virtual_Channels_in_Modern_Hardware.md` for full details.
 
 ---
 
