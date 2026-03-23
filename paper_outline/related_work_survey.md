@@ -104,6 +104,17 @@ These are the most directly related papers. They reconfigure the NoC topology to
 
 ---
 
+## Category 5b: Workload / Collective Representation and Decomposition
+
+| Paper | Venue/Year | Key Contribution | Relevance / Gap |
+|-------|-----------|------------------|-----------------|
+| **Yoo, Won et al., "Toward a Standardized Representation for Deep Learning Collective Algorithms"** | IEEE Micro 2025 (Hot Interconnects 31) | Extends Chakra ET to represent collective algorithms as primitive COMM_SEND/COMM_RECV/COMP DAGs, decoupling algorithm implementation from collective naming | **Cited in §4.2.** Same decomposition philosophy as our IR (SendTask/ReceiveTask/ProcessTask). They decompose *collectives* across NPUs; we decompose *compute operators* across mesh cores. Validates that primitive task decomposition is a recognized approach. Does not address defect tolerance, topology remapping, or spatial architectures. |
+| Sridharan et al., "Chakra: Advancing Performance Benchmarking and Co-Design Using Standardized Execution Traces" | arXiv 2023 | Chakra ET: standard graph-based representation for distributed ML workload traces | Foundation for Yoo et al.; workload-only (no collective algorithm detail) |
+
+**Gap:** These works focus on representing workloads/collectives for simulation and benchmarking on distributed GPU clusters. They do not address spatial mesh architectures, physical defects, or topology remapping. Our IR applies the same primitive decomposition principle but targets a fundamentally different problem: mapping compute operators onto a defective 2D mesh with deadlock-free routing.
+
+---
+
 ## Category 6a: Deadlock-Free Mapping for Neural Network / Accelerator Chips
 
 | Paper | Venue/Year | Key Contribution | Relevance / Gap |

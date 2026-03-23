@@ -218,6 +218,47 @@ Note: Intel Skylake-SP (AD/AK/BL/IV) and ARM CHI (REQ/RSP/SNP/DAT) are **protoco
 
 **Conclusion:** Single-die VC-free products discard the die on interior defects. The one VC-free product with a multi-chip extensible mesh (Adapteva) **never solved** the hole-in-mesh problem. SpiNNaker tolerates loss. The only products that handle interior defects in multi-die meshes losslessly — Cerebras (24 VCs), Google TPU (≥2 VCs) — all use virtual channels. Our ≥2 VC requirement is the inherent cost of choosing utilization over waste.
 
+---
+
+## 6. Yoo, Won et al. 2025 — "Toward a Standardized Representation for Deep Learning Collective Algorithms"
+
+- **Authors:** Jinsun Yoo, William Won, Meghan Cowan, Nan Jiang, Benjamin Klenk, Srinivas Sridharan, Tushar Krishna
+- **Venue:** IEEE Micro, Vol. 45 No. 2, March/April 2025 (Hot Interconnects 31)
+- **DOI:** https://doi.org/10.1109/MM.2025.3547363
+
+### What they do
+- Propose using **Chakra Execution Trace (ET)** as a common representation for both distributed ML workloads and collective algorithms
+- Extend Chakra ET to encode arbitrary collective algorithms by decomposing them into three primitive node types:
+  - **COMM_SEND:** point-to-point message send to a destination NPU
+  - **COMM_RECV:** wait for a point-to-point message from a source NPU
+  - **COMP:** run a compute task (e.g., reduction)
+- This **decouples the algorithm implementation from the collective's name** — an "All-Reduce" is not a black box but a specific DAG of sends, receives, and reductions
+- Show proof-of-concept: MSCCLang DSL and TACOS synthesizer both produce Chakra ET, consumed by ASTRA-sim simulator
+- Key benefit: enables co-optimization of compute and communication (Figure 4 — fine-grained overlap of All-Gather chunks with matrix multiplication)
+
+### Key technical details
+- Each Chakra ET trace = multiple DAGs (one per NPU), vertices = operations, edges = dependencies
+- Collective algorithms represented as per-NPU task graphs of COMM_SEND/COMM_RECV/COMP nodes
+- Ring-based Reduce-Scatter example: each NPU repeatedly sends to next, receives from previous, then reduces — represented as sequential [SEND → RECV → COMP] chains
+- Topology-aware algorithms (TACOS) produce more complex DAGs with parallel dependencies
+- Common representation enables plug-and-play: swap algorithm Chakra ET files without modifying downstream tools
+
+### Relevance to our work — used in §4.2
+Our IR decomposes operators into the same three primitive task types (SendTask, ReceiveTask, ProcessTask) organized as per-core DAGs. We cite this paper to establish that decomposing named operations into send/receive/compute primitives is a recognized approach:
+
+| Chakra ET | Our IR | Scope |
+|-----------|--------|-------|
+| COMM_SEND | SendTask (message_id, message_size) | Per-message |
+| COMM_RECV | ReceiveTask (message_id) | Per-message, paired with send |
+| COMP | ProcessTask (process_id, steps) | With explicit duration |
+| DAG per NPU | TaskGraph per actor | Per-core dependency tracking |
+
+**Key difference in scope:** They decompose *communication collectives* (All-Reduce → sends/receives across distributed NPUs). We decompose *compute operators* (GEMM → data distribution + local compute + reduction across mesh cores). Our decomposition is at a finer granularity and on a spatial architecture.
+
+**Additional advantage of our IR:** Two-level hierarchy (Work → Task). Works provide semantic-level patterns (Unicast, Reduce, Gather, AllToAll) that decompose into executable Tasks. Chakra ET is flat — just nodes in a DAG. Our Work-level gives composability that Chakra ET lacks.
+
+---
+
 ### Citations to add to references.bib (not all PDFs downloadable):
 - Cerebras SDK docs: https://sdk.cerebras.net/computing-with-cerebras (web reference)
 - Intel mesh: WikiChip https://en.wikichip.org/wiki/intel/mesh_interconnect_architecture (web reference)

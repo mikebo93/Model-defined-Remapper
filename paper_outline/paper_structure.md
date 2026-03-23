@@ -307,66 +307,108 @@ Given that the mapping problem is NP-hard (§3.2), exact algorithms are infeasib
 ### 4.1 Overview
 
 > **[FIGURE PLACEHOLDER — §4.1 Figure: Framework Overview]**
-> End-to-end pipeline diagram. Inputs on the left: (1) Physical mesh with defective nodes marked, (2) Workload description (GEMM/GEMV communication graph). Pipeline stages in the center: **Node Mapping (§4.2)** → **Workload-Aware Cost Evaluation (§4.3)** → **Static Routing (§4.4)** → **Deadlock Resolution (§4.5)**. Output on the right: Virtual mesh mapped onto physical substrate + deadlock-free routing tables. Show feedback loop from cost evaluation back to node mapping (iterative refinement).
+> End-to-end pipeline diagram.
+> **Inputs** (left): (1) AI model compute graph (hardware-agnostic), (2) Remapper configuration, (3) Virtual NoC specification, (4) Hardware info (core capabilities, link bandwidth, etc.), (5) Defect map (faulty nodes/links).
+> **Pipeline** (center): **Compile (§4.2)** → **Init Anchor (§4.3)** → **Iterative Frontier Expansion (§4.4)** with interleaved routing and cost evaluation → **Output**.
+> **Output** (right): Node mapping $f: V \to P$ + static deterministic routing tables.
+> Show the iterative loop in §4.4: expand frontier → build routing paths for covered dataflow → evaluate node cost + routing cost across multiple trials → pick best trial → repeat.
 
-The Model-Defined Remapper takes two inputs: a defective physical mesh (with faulty nodes/links identified) and a workload communication graph (encoding GEMM/GEMV traffic patterns). It produces a virtual-to-physical node mapping with deadlock-free routing tables. The pipeline has four stages:
+**Inputs.** The remapper takes five inputs: (1) an AI model compute graph describing the workload's dataflow in hardware-agnostic form; (2) a remapper configuration (candidate pool size, number of trials, etc.); (3) a virtual NoC specification (the target regular mesh topology); (4) hardware information (core capabilities, link bandwidth, memory per core); and (5) a defect map identifying faulty nodes and links on the physical substrate.
 
-1. **Node Mapping (§4.2):** Hierarchical spatial search finds an injective mapping $f: V \to P$ from virtual to healthy physical nodes, guided by a workload-aware cost function.
-2. **Workload-Aware Cost Evaluation (§4.3):** Scores each candidate mapping by geometric displacement, hop stretch weighted by communication volume, and link congestion.
-3. **Static Deterministic Routing (§4.4):** Computes physical routing paths for all virtual communication edges at mapping time.
-4. **Deadlock Resolution (§4.5):** Enforces acyclic channel dependencies via submesh-hierarchy routing, guaranteeing deadlock freedom and cycle-free paths.
+**Output.** The remapper produces a node mapping $f: V \to P$ from virtual mesh nodes to healthy physical nodes, together with static, deterministic routing tables that specify the physical path for every virtual communication edge. These routing tables are guaranteed deadlock-free (§4.5).
 
-### 4.2 Node Mapping: Hierarchical Spatial Search
+**Pipeline.** The remapping proceeds in four stages:
 
-**Problem formulation:** Given virtual mesh $V$ and faulty physical mesh $P$ (with defective nodes/links removed), find an injective mapping $f: V \to P$ that minimizes a workload-weighted cost. This is approximate graph matching — we optimize a continuous cost function rather than requiring strict structural preservation.
+1. **Compile (§4.2):** Translate the hardware-agnostic compute graph into a hardware-aware compute graph with explicit communication edges (GEMM systolic shifts, GEMV broadcast/reduce, etc.) and traffic volume annotations.
+2. **Init Anchor (§4.3):** Select an anchor node on the physical mesh and map the corresponding virtual node to it, initializing both virtual and physical frontier node sets.
+3. **Iterative Frontier Expansion (§4.4):** The core mapping loop. At each iteration:
+   - Expand the mapping by matching unmapped virtual frontier neighbors to physical frontier neighbors, evaluating multiple candidate trials in parallel.
+   - For each trial, build routing paths for the dataflow edges covered so far, then compute a combined node cost + routing cost.
+   - Select the trial with the lowest total cost; advance the frontier.
+4. **Output:** Emit the final node mapping and routing tables. Routing is verified deadlock-free via submesh-hierarchy constraints (§4.5).
 
-> **[ALGORITHM PLACEHOLDER — Algorithm 1: Hierarchical Spatial Search]**
+**Assumptions:**
+- The physical NoC supports ≥2 virtual channels (VCs) for deadlock-free routing (§4.5). (Additional assumptions to be added.)
+
+### 4.2 Compute Graph Compilation
+
+The remapper's first stage translates a hardware-agnostic AI model compute graph into a hardware-aware communication graph. The input graph describes the model's dataflow (e.g., layers, activations, weight accesses) without reference to specific hardware. The compiler:
+
+- Decomposes each layer into the concrete communication operations for the target mesh: **systolic shifts** (nearest-neighbor row/column data flow for GEMM), **broadcast/reduce trees** (for GEMV), and **point-to-point transfers** (for pipeline stage boundaries).
+- Annotates each communication edge with **traffic volume** (bytes per inference step) derived from the model's tensor dimensions and parallelism configuration.
+- Produces a hardware-aware compute graph where each node corresponds to a virtual mesh tile and each edge carries a communication type and volume — this graph drives the workload-aware cost function in §4.4.
+
+**Decomposition into primitive tasks.** Crucially, the compilation step decomposes named high-level operations (e.g., GEMM, GEMV, attention) into primitive per-core **transmission** and **computation** tasks, organized as a per-core dependency graph. Each task is one of three types: *send* (inject a message of a given size to a destination core), *receive* (wait for a message from a source core), or *process* (execute a computation for a specified duration). This decomposition decouples the remapper from operator-level semantics — a "GEMM" or "GEMV" is not a named black box but a specific dataflow pattern of sends, receives, and local compute across a group of cores. The remapper and cost function reason only about these primitives, making the framework extensible to new operators without modifying the mapping algorithm.
+
+This decomposition philosophy is analogous to how Yoo et al. \cite{yoo2025standardized} extend the Chakra Execution Trace format to represent collective algorithms (All-Reduce, All-Gather, etc.) as graphs of primitive COMM\_SEND, COMM\_RECV, and COMP nodes — decoupling the algorithm implementation from the collective's name. Our work applies the same principle at a different level: rather than decomposing *communication collectives* across distributed NPUs, we decompose *compute operators* into per-core task graphs on a spatial mesh architecture. This finer granularity enables the remapper to co-optimize placement and routing with respect to the actual dataflow, and to model compute-communication overlap at the task level (e.g., a core can begin local computation while still receiving data from neighbors).
+
+### 4.3 Anchor Initialization
+
+The mapping begins by anchoring a single virtual node to a physical node. The anchor determines the global position and orientation of the virtual mesh on the physical substrate.
+
+- Select an anchor physical node based on spatial centrality within the healthy region (maximizing the available expansion space in all directions).
+- Map the corresponding virtual node (e.g., the center of the virtual mesh) to this anchor.
+- Initialize the **frontier**: the set of virtual nodes adjacent to already-mapped nodes, paired with the set of candidate physical nodes adjacent to already-mapped physical nodes.
+
+### 4.4 Iterative Frontier Expansion with Interleaved Routing
+
+> **[ALGORITHM PLACEHOLDER — Algorithm 1: Frontier Expansion with Interleaved Routing]**
 > ```
-> Input: Virtual mesh V, Physical mesh P (defects removed), Workload graph W
-> Output: Mapping f: V → P
+> Input: Hardware-aware compute graph G, Physical mesh P (defects removed),
+>        Virtual NoC V, Anchor mapping (v_0 → p_0)
+> Output: Mapping f: V → P, Routing tables R
 >
-> Phase 1 — Spatial Decomposition:
->   Recursive Coordinate Bisection (RCB) partitions both V and P
->   into aligned spatial regions → reduces global problem to local sub-problems
+> frontier_v ← neighbors of v_0 in V
+> frontier_p ← neighbors of p_0 in P (healthy only)
+> mapped ← {v_0 → p_0}
 >
-> Phase 2 — Coarse Mapping:
->   Build KdTree over physical nodes; group into super nodes
->   Match virtual partitions to physical super nodes by spatial proximity
+> while frontier_v is not empty:
+>   // Generate multiple candidate trials
+>   for each trial t in 1..T:
+>     Pick next unmapped virtual node v from frontier_v
+>     Select candidate physical node p_t from frontier_p neighbors
+>     Tentatively map v → p_t
 >
-> Phase 3 — Fine Mapping via Frontier Expansion:
->   For each partition:
->     Expand mapping frontier outward from seed nodes
->     For each unmapped virtual node on frontier:
->       2-level candidate search: coarse (super node) → fine (individual node)
->       Evaluate candidates using workload-aware cost (§4.3)
->       Select best candidate; update mapping and frontier
+>     // Interleaved routing: build paths for newly covered edges
+>     For each dataflow edge (v, v') where both v and v' are now mapped:
+>       Compute physical routing path from f(v) to f(v')
+>       Ensure path avoids faulty nodes and previously allocated channels
+>
+>     // Cost evaluation
+>     node_cost_t ← evaluate geometric + neighbor displacement cost
+>     routing_cost_t ← evaluate hop stretch × traffic volume + link congestion
+>     total_cost_t ← node_cost_t + routing_cost_t
+>
+>   // Select best trial
+>   t* ← argmin(total_cost_t)
+>   Commit mapping and routing paths for trial t*
+>   Update frontier_v and frontier_p
+>
+> return mapped, routing_tables
 > ```
 
-- **Phase 1 — Spatial decomposition:** Recursive Coordinate Bisection (RCB) partitions both $V$ and $P$ into aligned spatial regions, reducing global $N \times N$ assignment to a set of local sub-problems.
-- **Phase 2 — Coarse mapping via KdTree super nodes:** Build KdTree over physical nodes; group into super nodes. Match virtual partitions to physical super nodes by spatial proximity. Per-node search is $O(\log M)$ instead of $O(M)$.
-- **Phase 3 — Fine mapping via frontier expansion:** Within each partition, expand the mapping frontier outward from seed nodes. Each unmapped virtual node on the frontier is matched via a 2-level hierarchical candidate search: coarse (super node) then fine (individual node). Frontier-based expansion avoids the local minima of pure greedy assignment — each decision is informed by the spatial context of already-mapped neighbors.
+This is the core of the remapper. Key design decisions:
 
-### 4.3 Workload-Aware Cost Function
+- **Frontier-based expansion** ensures spatial locality — each new mapping is adjacent to already-mapped nodes, preserving the mesh structure and avoiding fragmented placements.
+- **Interleaved routing** evaluates routing cost *during* mapping, not after. This is critical: a node placement that looks good by coordinate distance may create long or congested routing paths. By building routes incrementally, the cost function captures the actual physical communication cost at each step.
+- **Multiple trials** at each expansion step explore different candidate physical nodes in parallel, avoiding greedy local minima. The trial with the lowest combined node + routing cost is committed.
+- **Routing paths are static and deterministic** — computed once during mapping and fixed for deployment. This enables offline verification of deadlock freedom (§4.5) and eliminates runtime routing overhead.
 
-The cost function scores candidate mappings along three dimensions:
+### 4.5 Cost Function (used within §4.4)
 
-- **Coordinate cost:** geometric displacement between virtual and physical positions, with RANSAC-based geometric consistency check to reject outlier mappings.
-- **Hop cost:** weighted by link usage — penalizes mappings that overload physical links or create unnecessarily long detours.
-- **Communication cost:** weighted by actual traffic volume from the workload graph (GEMM/GEMV IR).
-  - If two virtual nodes never communicate → zero cost regardless of physical distance.
-  - High-traffic edges (e.g., systolic shift links in GEMM, broadcast trunk in GEMV) → heavily penalized if mapped to long physical paths.
+The cost function scores each trial along two dimensions, evaluated together at each frontier expansion step:
+
+**Node cost:**
+- **Coordinate displacement:** geometric distance between the virtual node's expected position and the candidate physical position.
+- **Neighbor consistency:** how well the candidate preserves adjacency — mapped virtual neighbors should be physically close.
+
+**Routing cost:**
+- **Hop stretch × traffic volume:** for each routed dataflow edge, the physical hop count weighted by the edge's communication volume. High-traffic edges (systolic shifts in GEMM, broadcast trunks in GEMV) are heavily penalized if mapped to long paths.
+- **Link congestion:** penalizes mappings that overload physical links shared by multiple routes.
 
 The cost function is separately tunable for prefill (GEMM-dominated) and decode (GEMV-dominated) workloads, enabling the remapper to produce phase-specific mappings.
 
-### 4.4 Static Deterministic Routing
-
-For each virtual communication edge, the remapper computes a physical routing path on the mapped topology. Paths are:
-- **Static:** computed once at mapping time, not at runtime.
-- **Deterministic:** the same virtual edge always uses the same physical path.
-
-Static routing enables offline analysis of the full channel dependency graph before deployment, and eliminates runtime routing overhead. The routing paths feed into the deadlock resolution stage (§4.5).
-
-### 4.5 Deadlock-Free Routing via Submesh Hierarchy
+### 4.6 Deadlock-Free Routing via Submesh Hierarchy
 
 > **[ALGORITHM PLACEHOLDER — Algorithm 2: Submesh-Hierarchy Deadlock Resolution]**
 > ```
