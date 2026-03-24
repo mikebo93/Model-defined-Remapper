@@ -104,6 +104,21 @@ These are the most directly related papers. They reconfigure the NoC topology to
 
 ---
 
+## Category 5a: Wafer-Scale Workload Analysis (beyond WaferLLM/Cerebras)
+
+| Paper | Venue/Year | Key Contribution | Relevance / Gap |
+|-------|-----------|------------------|-----------------|
+| **Rashidi, Won et al., "FRED: Flexible REduction-Distribution Interconnect for Wafer-Scale DNN Training"** | ISCA 2025 | Identifies 6 critical limitations of 2D mesh for wafer-scale training (I/O scaling, 3D parallelism unmappable to 2D, corner bottlenecks); proposes Clos-like switch fabric achieving 1.34–1.87× over mesh | **Key supporting evidence for §2.2.** Independent (non-WaferLLM) confirmation that mesh topology directly limits wafer-scale performance. They propose replacing mesh; we keep mesh but remap it intelligently. |
+| **Xu et al., "WSC-LLM: Efficient LLM Service and Architecture Co-exploration for Wafer-scale Chips"** | ISCA 2025 | Joint hardware-software co-exploration for LLM serving on wafer-scale 2D mesh; topology-aware scheduler for prefill/decode placement | **Second independent LLM-on-wafer paper** alongside WaferLLM. Confirms prefill/decode need different mesh treatment. Diversifies §2.2 evidence base. |
+| **"Benchmarking the Cerebras Wafer Scale Engine-2 Architecture"** | SC 2025 Workshop | Independent WSE-2 benchmarking: inter-PE communication, 503 TFLOPS stencil, roofline model; B/F ratio 10× higher than CPU/GPU | **Independent hardware characterization.** Non-Cerebras source for WSE mesh performance data. |
+| **Wei et al., "Spatial-Aware Orchestration of LLM Attention on Waferscale Chips"** | APPT 2025 | Shows 2D mesh undermines GPU-optimized ring-attention; causal masks create position-dependent workload imbalance; 1.5× improvement via spatial-aware cost model | **Supports §2.2.** Even within a single operator (attention), mesh topology structure matters — GPU-designed algorithms don't transfer. |
+| **Yang et al., "Segmentation-Aware Optimization of Collectives for Waferscale Chips"** | APPT 2025 | Extends Alpha-Beta cost model for die-to-die bandwidth heterogeneity on wafer mesh; 73% overhead reduction | **Supports §2.1/§3.2.** Wafer-scale mesh has inherent non-uniformity (die boundaries) beyond defects — topology-aware treatment needed. |
+| **"Exploring the Suitability of the Cerebras WSE for Stencil-Based Computation"** | Euro-Par 2023 | Independent WSE stencil evaluation; communication pattern analysis on 2D mesh. EPCC, University of Edinburgh | Edinburgh work. Even mesh-friendly stencil workloads show communication sensitivity on WSE. |
+
+**Gap:** These works analyze or optimize workloads on wafer-scale mesh, but **none address defect tolerance or topology remapping**. FRED proposes a new topology; WSC-LLM and the Tsinghua papers optimize scheduling/collectives assuming a healthy mesh. Our work is the first to combine workload-aware optimization with defect-tolerant remapping on wafer-scale mesh.
+
+---
+
 ## Category 5b: Workload / Collective Representation and Decomposition
 
 | Paper | Venue/Year | Key Contribution | Relevance / Gap |

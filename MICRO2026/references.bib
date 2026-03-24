@@ -548,3 +548,74 @@
   doi     = {10.1109/MM.2025.3547363},
   note    = {Proposes using Chakra ET to represent collective algorithms as primitive COMM\_SEND, COMM\_RECV, and COMP nodes, decoupling algorithm implementation from collective naming}
 }
+
+%% ============================================================
+%% Wafer-Scale Workload Analysis (beyond WaferLLM/Cerebras)
+%% ============================================================
+
+@inproceedings{rashidi2025fred,
+  author    = {Rashidi, Saeed and Won, William and Srinivasan, Sudarshan and Gupta, Puneet and Krishna, Tushar},
+  title     = {{FRED}: Flexible {REduction-Distribution} Interconnect and Communication Implementation for Wafer-Scale Distributed Training of {DNN} Models},
+  booktitle = {Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA)},
+  year      = {2025},
+  doi       = {10.1145/3695053.3731055},
+  note      = {Identifies six critical limitations of 2D mesh for wafer-scale training; proposes hierarchical switch-based fabric achieving 1.34--1.87$\times$ speedup over baseline mesh. arXiv:2406.19580}
+}
+
+@inproceedings{xu2025wscllm,
+  author    = {Xu, Zheng and Kong, Dehao and Li, Jinxi and Liu, Jiaxin and Hou, Jingxiang and Dai, Xu and Li, Chao and Wei, Shaojun and Hu, Yang and Yin, Shouyi},
+  title     = {{WSC-LLM}: Efficient {LLM} Service and Architecture Co-exploration for Wafer-scale Chips},
+  booktitle = {Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA)},
+  year      = {2025},
+  doi       = {10.1145/3695053.3731101},
+  note      = {Joint hardware-software co-exploration for LLM serving on wafer-scale 2D mesh; topology-aware scheduler for prefill/decode placement}
+}
+
+@inproceedings{song2025benchmarkwse,
+  author    = {Song, Shihui and Huang, Yafan and Jiang, Peng and Yu, Xiaodong and Zheng, Weijian and Di, Sheng and Cao, Qinglei and Feng, Yunhe and Xie, Zhen and Cappello, Franck},
+  title     = {Benchmarking the {Cerebras} {Wafer Scale Engine-2} Architecture},
+  booktitle = {Proceedings of the SC '25 Workshops of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+  year      = {2025},
+  publisher = {ACM},
+  doi       = {10.1145/3731599.3767438},
+  note      = {Independent WSE-2 benchmarking: 1.06 PFLOPS single-precision, 8.80 PB/s memory BW; roofline shows B/F ratio $\sim$10$\times$ higher than CPU/GPU; even SpMV becomes compute-bound on WSE-2}
+}
+
+@inproceedings{wei2025spatialattention,
+  author    = {Wei, Taiquan and Wang, Huizheng and Wang, Zichuan and Yin, Shouyi and Hu, Yang},
+  title     = {Spatial-Aware Orchestration of {LLM} Attention on Waferscale Chips},
+  booktitle = {Advanced Parallel Processing Technologies (APPT 2025)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {16062},
+  pages     = {386--391},
+  year      = {2025},
+  publisher = {Springer},
+  doi       = {10.1007/978-981-95-1021-4\_29},
+  note      = {Shows 2D mesh topology undermines GPU-optimized ring-attention; ring logical neighbors may be physically distant on mesh; causal masks create position-dependent imbalance; 1.5$\times$ improvement via spatial-aware cost model}
+}
+
+@inproceedings{brown2023stencilwse,
+  author    = {Brown, Nick and Echols, Brandon and Zarins, Justs and Grosser, Tobias},
+  title     = {Exploring the Suitability of the {Cerebras} Wafer Scale Engine for Stencil-Based Computation Codes},
+  booktitle = {Euro-Par 2022: Parallel Processing Workshops},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {13835},
+  pages     = {51--65},
+  year      = {2023},
+  publisher = {Springer},
+  doi       = {10.1007/978-3-031-31209-0\_4},
+  note      = {Independent WSE-1 evaluation via TensorFlow (no direct PE mapping control); CS-1 achieves 2.5$\times$ over 4$\times$ V100 GPUs for Jacobi stencil. EPCC, University of Edinburgh}
+}
+
+@inproceedings{yang2025segmentation,
+  author    = {Yang, Qize and Liu, Jiaxin and Wei, Taiquan and Jin, Yuxin and Yin, Shouyi and Hu, Yang},
+  title     = {Segmentation-Aware Optimization of Collective for Waferscale Chips},
+  booktitle = {Advanced Parallel Processing Technologies (APPT 2025)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {15558},
+  pages     = {34--46},
+  year      = {2025},
+  publisher = {Springer},
+  doi       = {10.1007/978-981-95-1021-4\_3},
+  note      = {Extends Alpha-Beta cost model with die-to-die bandwidth segmentation awareness; D2D bandwidth varies with packet size, creating optimal segmentation granularity; reduces collective overhead by 73.43\%}
+}

@@ -259,6 +259,126 @@ Our IR decomposes operators into the same three primitive task types (SendTask, 
 
 ---
 
+## 7. Rashidi, Won et al. 2025 — "FRED: Flexible REduction-Distribution Interconnect and Communication Implementation for Wafer-Scale Distributed Training of DNN Models"
+
+- **Authors:** Saeed Rashidi, William Won, Sudarshan Srinivasan, Puneet Gupta, Tushar Krishna
+- **Venue:** ISCA 2025 (arXiv: 2406.19580)
+- **Affiliations:** Georgia Tech, Intel, UCLA
+
+### What they do
+- Propose **FRED**, a wafer-scale fabric that replaces 2D mesh with a hierarchical switch-based topology (Clos-like with microswitches) for DNN training
+- Identify **six critical limitations of 2D mesh** for wafer-scale training:
+  1. I/O bandwidth grows O(N) with mesh width — prohibitive at scale
+  2. Mathematically impossible to optimally map 3D parallelism (MP/DP/PP) onto 2D mesh — only two logical dimensions
+  3. Non-aligned parallelization sizes create irregular shapes incompatible with standard collective algorithms
+  4. Links underutilized across different training phases
+  5. No in-network collective support — endpoint-based algorithms require ~2× traffic overhead
+  6. Corner NPUs have only 2 outgoing links — fundamental bottleneck
+- FRED achieves 1.34×–1.87× speedup over baseline wafer-scale 2D mesh for GPT-3, Transformer-17B, ResNet-152, Transformer-1T
+- Hardware overhead: 36% of unclaimed wafer area, 1.2% of power budget
+
+### Relevance to our work
+- **Strongly supports §2.2's argument** that wafer-scale 2D mesh topology directly impacts workload performance
+- Their finding that "it is mathematically impossible for all 3D parallelism dimensions to be optimally mapped onto a 2D Mesh" is a powerful independent validation that mesh topology matters
+- Key difference: FRED proposes replacing mesh with a new topology; we keep mesh but remap it intelligently for defect tolerance. Their critique of mesh motivates why, if you must use mesh, you should at least map it well
+- Can cite in §2.1 or §2.2 to diversify beyond WaferLLM
+
+---
+
+## 8. WSC-LLM (Xu et al. 2025) — "Efficient LLM Service and Architecture Co-exploration for Wafer-scale Chips"
+
+- **Authors:** Zheng Xu, Dehao Kong, Jinxi Li, Jiaxin Liu, Jingxiang Hou, Xu Dai, Chao Li, Shaojun Wei, Yang Hu, Shouyi Yin
+- **Venue:** ISCA 2025
+- **Affiliations:** Tsinghua University, Shanghai AI Lab
+
+### What they do
+- Co-exploration framework that jointly optimizes hardware parameters (DRAM capacity, interconnect bandwidth) and software scheduling (prefill/decode placement) on wafer-scale 2D mesh
+- Includes a **Central Scheduler** aware of mesh topology for placing prefill/decode workloads
+- **Memory Scheduler** leverages D2D bandwidth for KV cache management across the wafer
+- Analyzes prefill and decode as separate workloads with different resource requirements on wafer-scale mesh
+
+### Relevance to our work
+- **Second independent paper** (alongside WaferLLM) that analyzes LLM prefill/decode on wafer-scale mesh
+- Confirms that mesh topology awareness matters for LLM serving — their scheduler is topology-aware
+- Can cite in §2.2 to reduce WaferLLM dependency: "Multiple independent studies confirm that wafer-scale mesh topology directly affects LLM serving performance \cite{he2025waferllm, xu2025wscllm}"
+
+---
+
+## 9. Benchmarking WSE-2 (SC 2025 Workshop)
+
+- **Venue:** SC 2025 Workshops (ACM)
+- **Note:** Independent benchmarking, not by Cerebras
+
+### What they do
+- Detailed benchmarking of Cerebras WSE-2 including:
+  - Inter-PE communication latency and bandwidth
+  - Computational performance (503 TFLOPS for stencil)
+  - Memory bandwidth per PE
+- Build a **roofline model** showing effective B/F ratio is an order of magnitude higher than CPUs/GPUs
+- Stencil computations confirmed compute-bound at 503 TFLOPS
+
+### Relevance to our work
+- **Independent, non-Cerebras source** for WSE performance characteristics
+- Roofline model provides quantitative evidence about communication vs. compute balance on WSE mesh
+- Can cite in §2.1 for hardware characterization
+
+---
+
+## 10. Spatial-Aware Orchestration of LLM Attention on Waferscale Chips (Wei et al. 2025)
+
+- **Authors:** Taiquan Wei, Huizheng Wang, Zichuan Wang, Shouyi Yin, Yang Hu
+- **Venue:** APPT 2025, LNCS vol. 16062, pp. 386–391 (short paper, 6 pages)
+- **Affiliations:** Tsinghua University, Shanghai AI Lab
+
+### What they do
+- Show that **2D mesh topology undermines GPU-optimized ring-attention patterns** — patterns designed for fully-connected or switch-based topologies perform poorly on mesh
+- **Causal masks create workload imbalances** on mesh — different PEs in the mesh see different amounts of work depending on their position relative to the causal mask boundary
+- Develop a **spatial-aware cost model** for wafer-scale mesh that accounts for topology-induced communication asymmetry
+- Achieve 1.5× average improvement across LLM architectures by using topology-aware attention scheduling
+
+### Relevance to our work
+- **Directly supports §2.2** — not just GEMM/GEMV but even attention patterns are sensitive to mesh topology
+- Validates that "GPU-optimized algorithms don't transfer to mesh" — reviewers who think mesh is just another interconnect will see this as evidence
+- Can cite alongside WaferLLM: even within a single operator (attention), mesh topology structure matters for performance
+
+---
+
+## 11. Stencil on WSE (EPCC / University of Edinburgh, Euro-Par 2023)
+
+- **Venue:** Euro-Par 2023 Workshops (Springer)
+- **Affiliations:** EPCC, University of Edinburgh
+
+### What they do
+- Early independent evaluation of Cerebras WSE for stencil-based computations (non-ML workload)
+- Study how data distribution and nearest-neighbor communication patterns map onto the WSE 2D mesh
+- Analyze communication overhead for stencil operations that have natural mesh-friendly patterns
+
+### Relevance to our work
+- From **our own university** — nice to cite Edinburgh work
+- Shows that even for stencil (which is the most mesh-friendly workload), communication patterns on WSE matter
+- Provides independent WSE performance data from a non-Cerebras, non-ML perspective
+
+---
+
+## 12. Segmentation-Aware Optimization of Collectives for Waferscale Chips (Yang et al. 2025)
+
+- **Authors:** Yang, Liu, Wei, Jin, Yin, Hu
+- **Venue:** APPT 2025 (Springer)
+- **Affiliations:** Tsinghua University
+
+### What they do
+- Extend the Alpha-Beta cost model with **segmentation awareness** — wafer-scale chips are built from multiple dies bonded together, creating die-to-die bandwidth boundaries within the mesh
+- Account for **pipeline depth** and **die boundary crossings** in collective communication cost modeling
+- Reduce communication overhead by 73.43% and improve collective efficiency by 21.12% over SOTA
+- Key insight: not all links in the wafer-scale mesh are equal — die boundaries create bandwidth heterogeneity
+
+### Relevance to our work
+- **Supports §2.1** — wafer-scale mesh is not homogeneous; die boundaries create link heterogeneity
+- Complements our defect argument: defects create routing heterogeneity, die boundaries create bandwidth heterogeneity — both require topology-aware treatment
+- Can cite in §2.1 or §3.2 to argue that wafer-scale mesh has inherent non-uniformity beyond defects
+
+---
+
 ### Citations to add to references.bib (not all PDFs downloadable):
 - Cerebras SDK docs: https://sdk.cerebras.net/computing-with-cerebras (web reference)
 - Intel mesh: WikiChip https://en.wikichip.org/wiki/intel/mesh_interconnect_architecture (web reference)
