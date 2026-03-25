@@ -71,7 +71,7 @@ Wafer-scale 2D mesh architectures have emerged as the dominant substrate for lar
 
 However, LLM inference is not a monolithic workload. It decomposes into two phases with fundamentally different characteristics: \emph{prefill} processes the full input prompt via GEMM (compute-bound, high arithmetic intensity), while \emph{decode} generates tokens autoregressively via GEMV (memory-bandwidth-bound, low arithmetic intensity). Crucially, optimal performance requires \emph{right-sized} mesh partitions for each phase --- WaferLLM~\cite{he2025waferllm} demonstrates that decode throughput can actually \emph{decrease} when scaling to more cores, because communication overhead outweighs the computational benefit. The disaggregated inference paradigm~\cite{zhong2024distserve, patel2024splitwise} formalizes this by separating prefill and decode onto differently-sized hardware partitions.
 
-Manufacturing defects are inevitable at wafer scale. Under the industry-standard negative binomial yield model~\cite{stapper1983}, the probability of a defect-free wafer is essentially zero. Even at a modest 1\% defect rate, the largest contiguous defect-free mesh on a $750 \times 750$ wafer covers only ${\sim}36 \times 36$ nodes --- \textbf{0.23\% utilization}. Defects fragment the physical substrate, and the right-sized mesh for a given workload may simply not exist as a contiguous region.
+Manufacturing defects are inevitable at wafer scale. Under the industry-standard negative binomial yield model~\cite{stapper1983}, the probability of a defect-free wafer is essentially zero. Even at a modest 1\% defect rate on a $1000 \times 1000$ mesh, the most likely largest defect-free square has side length $\boldsymbol{s^* \approx \sqrt{2\ln W / p} \approx 37}$. Defects fragment the physical substrate, and the right-sized mesh for a given workload may simply not exist as a contiguous region.
 
 Industry addresses defects through yield binning (NVIDIA, AMD)~\cite{nvidia2020ga102, gamersnexus2013binning}, edge discard (Tilera)~\cite{tilera2013tilegx}, and spare-core remapping (Cerebras, Tesla Dojo)~\cite{cerebras2025sigops, talpes2023dojo}. Cerebras's approach is the most sophisticated: a proprietary algorithm routes around defects to expose a regular 2D mesh to software~\cite{luczynski2024reduce}. However, the algorithm is undisclosed and cannot be reproduced or extended. Moreover, it only restores regularity --- it does not optimize for workload-specific communication patterns, and it conceals redundant resources (spare cores, diagonal links) that could improve performance.
 
@@ -106,6 +106,19 @@ Current approaches hide spare cores, diagonal links, and additional virtual chan
 \section{Background \& Motivation}
 \label{sec:background}
 
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{../image/defect_types.pdf}
+  \subcaption{Two types of wafer defects: (a)~random contamination and (b)--(f)~systematic patterns (edge-ring, center, scratch, local, donut)~\cite{xu2022wafermap}.}
+  \label{fig:defect_types}
+  \vspace{0.5em}
+  \includegraphics[width=\linewidth]{../image/die_yield.pdf}
+  \subcaption{Die yield under the same defect density. (a)~Large dies suffer low yield (40\%) because a single defect anywhere on the die renders it unusable. (b)~Smaller dies achieve higher yield (84\%).}
+  \label{fig:die_yield}
+  \caption{Defects are inevitable in semiconductor manufacturing. (Top)~Defects exhibit diverse spatial patterns beyond simple uniform randomness. (Bottom)~Yield drops sharply with die area, making defect tolerance a design requirement at wafer scale.}
+  \label{fig:defect_severity}
+\end{figure}
+
 \subsection{From Larger Chips to Defect Tolerance}
 \label{sec:bg-defects}
 
@@ -118,15 +131,15 @@ Manufacturing defects --- both random contamination and systematic process varia
 Conventional chips handle defects in three ways:
 (1)~\emph{Yield binning} --- over-provision compute units and fuse off defective ones, selling chips with more defects as lower-tier SKUs (e.g., NVIDIA GA102~\cite{nvidia2020ga102}, AMD Zen~3~\cite{gamersnexus2013binning});
 (2)~\emph{Edge discard} --- disable peripheral cores in a mesh and discard the entire die on interior defects (e.g., Tilera TILE-Gx~\cite{tilera2013tilegx});
-(3)~\emph{Spare-core remapping} --- provision a small percentage of spare cores and remap around defects at manufacturing time (e.g., Tesla Dojo D1 with 1.7\% spares~\cite{talpes2023dojo}).
+(3)~\emph{Spare-core redundancy} --- provision a small percentage of extra cores and always disable a fixed number at manufacturing time (e.g., AMD MI300X enables 38 of 40 CUs per XCD, 5\% redundancy~\cite{amd2024mi300x}; Tesla Dojo D1 enables 354 of 360 cores, 1.7\% redundancy~\cite{talpes2023dojo}).
 These approaches work because the affected chips are either small enough that defect-free regions are common, or the interconnect topology (crossbar, bus) allows disabling a unit without affecting routing for the rest.
 
 \textbf{None of these approaches scale to wafer-scale 2D mesh.}
 Wafer-scale architectures use hundreds of thousands of small cores connected via a 2D mesh~\cite{lie2023cerebras}. The 2D mesh scales with $O(N)$ links and constant router radix, and maps directly to the planar silicon substrate (nearest-neighbor wiring only)~\cite{lie2019wafer}. This manufacturing friendliness is fundamental: alternative topologies such as Clos-based switch fabrics can improve communication flexibility~\cite{rashidi2025fred}, but they require non-local, non-planar wiring and additional switch area --- at odds with the lithographic constraints of wafer-scale integration.
-However, in a 2D mesh every core also serves as a \emph{router} for its neighbors. An interior defect creates a routing hole --- messages cannot traverse through it, breaking dimension-order routing for all traffic that would cross that point. Yield binning and edge discard cannot handle such interior faults; they would waste nearly all healthy silicon. Even a few defects can drastically limit the maximum contiguous defect-free region: at 1\% defect rate on a $750 \times 750$ mesh, the largest guaranteed defect-free square is only ${\sim}36 \times 36$ nodes --- \textbf{0.23\% utilization}.
+However, in a 2D mesh each node contains both a \emph{compute unit} and a \emph{routing unit}. A compute-unit failure disables only local processing --- the node can still forward traffic for its neighbors. A routing-unit failure is far more severe: the node becomes a \emph{routing hole} that breaks dimension-order routing for all traffic that would cross it. Yield binning and edge discard cannot handle such interior routing faults; they would waste nearly all healthy silicon. Without redundancy strategy, even a few defects drastically limit the maximum contiguous defect-free region: at 1\% defect rate on a $1000 \times 1000$ mesh, the most likely largest defect-free square has side length $\boldsymbol{s^* \approx \sqrt{2\ln W / p} \approx 37}$.
 
-\textbf{Cerebras's solution: redundant links + hardware remap.}
-The Cerebras WSE provisions spare cores (${\sim}$7\% redundancy) and redundant fabric links. A proprietary algorithm routes around defects to expose a regular 2D mesh to software~\cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization ($>$93\% of cores active), but the algorithm is undisclosed and cannot be reproduced. Furthermore, it only restores regularity --- it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
+\textbf{Wafer-scale solution: redundant links + hardware remap.}
+State-of-the-art wafer-scale processors provision redundant fabric links and use a proprietary algorithm to remap around defective cores, exposing a regular 2D mesh to software. For example, the Cerebras WSE achieves ${\sim}$93\% core utilization through such remapping~\cite{cerebras2025sigops, luczynski2024reduce}, but the algorithm is undisclosed and cannot be reproduced. Furthermore, it only restores regularity --- it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
 
 %% --- 2.2 ---
 \subsection{AI Inference on Wafer-Scale Mesh}
@@ -140,6 +153,15 @@ LLM inference consists of two distinct phases with fundamentally different compu
 
 \item \textbf{Decode phase:} Generates output tokens one at a time, autoregressively. Each step performs a GEMV (matrix--vector multiplication) against the KV-cache. This phase is \emph{memory-bandwidth-bound} with low arithmetic intensity.
 \end{itemize}
+
+\noindent Figure~\ref{fig:prefill_decode} illustrates this distinction. Prefill processes all $L$ input tokens simultaneously, loading the weight matrix $W$ once and multiplying it by a full activation matrix $A$ (GEMM) --- each weight element is reused $L$ times, making the operation compute-bound. Decode generates tokens one at a time: each step must reload the entire weight matrix $W$ to multiply it by a single activation vector $\mathbf{x}$ (GEMV) --- each weight is used only once per step, making the operation memory-bandwidth-bound.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{../image/prefill_decode.pdf}
+  \caption{Prefill vs.\ decode phases of LLM inference. (a)~Prefill loads $W$ once and processes all input tokens in parallel via GEMM (compute-bound). (b)~Decode must reload $W$ at every autoregressive step to process a single token via GEMV (memory-bandwidth-bound).}
+  \label{fig:prefill_decode}
+\end{figure}
 
 Because prefill and decode have opposite resource requirements, running them on the same hardware wastes resources. \emph{Disaggregated inference}~\cite{zhong2024distserve, patel2024splitwise} separates these phases onto different hardware partitions, each sized and optimized for its workload.
 
