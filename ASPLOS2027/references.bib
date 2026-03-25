@@ -342,6 +342,100 @@
 }
 
 %% ============================================================
+%% Defect Types & Wafer Map Classification
+%% ============================================================
+
+@article{murphy1964,
+  author = "B. T. Murphy",
+  title = "Cost-Size Optima of Monolithic Integrated Circuits",
+  journal = "Proceedings of the IEEE",
+  volume = "52",
+  number = "12",
+  pages = "1537--1545",
+  year = "1964",
+  doi = "10.1109/PROC.1964.3442",
+  note = "Introduced yield models relating defect density to die area; proposed probability distribution over D0 to account for spatial variation (Murphy's model)"
+}
+
+@inproceedings{seeds1967,
+  author = "R. B. Seeds",
+  title = "Yield, Economic, and Logistic Models of Complex Digital Arrays",
+  booktitle = "IEEE International Convention Record",
+  year = "1967",
+  pages = "60--61",
+  note = "Empirical yield model Y = exp(-sqrt(D0*A)); intermediate between Poisson and Murphy models"
+}
+
+@article{stapper1983,
+  author = "C. H. Stapper and F. M. Armstrong and K. Saji",
+  title = "Integrated Circuit Yield Statistics",
+  journal = "Proceedings of the IEEE",
+  volume = "71",
+  number = "4",
+  pages = "453--470",
+  year = "1983",
+  doi = "10.1109/PROC.1983.12615",
+  note = "Derived negative binomial yield model Y = (1 + D0*A/alpha)^(-alpha) using compound Poisson with gamma-distributed defect density; alpha captures defect clustering"
+}
+
+@article{cunningham1990,
+  author = "J. A. Cunningham",
+  title = "The Use and Evaluation of Yield Models in Integrated Circuit Manufacturing",
+  journal = "IEEE Transactions on Semiconductor Manufacturing",
+  volume = "3",
+  number = "2",
+  pages = "60--71",
+  year = "1990",
+  doi = "10.1109/66.53188",
+  note = "Comprehensive evaluation of Poisson, Murphy, Seeds, and negative binomial yield models; discusses limitations of cluster parameter alpha"
+}
+
+@online{gamersnexus2013binning,
+  author = "Steve Burke",
+  title = "Silicon Dies: Explaining {OC} Editions \& the Bin-Out Process -- {CPUs}, {RAM}, {GPUs}",
+  year = "2013",
+  url = "https://gamersnexus.net/guides/1140-silicon-die-bin-out-process-explained",
+  note = "Explains product binning: same die sorted into different SKUs by fusing off defective units. AMD locked defective cores on quad-core dies to sell as tri-core Phenom II X3"
+}
+
+@manual{tilera2013tilegx,
+  author = "{Tilera Corporation}",
+  title = "{TILE} Processor Architecture Overview for the {TILE-Gx} Series",
+  year = "2013",
+  note = "8x9 on-chip mesh, 5 physical networks, XY routing. Yield binning: 72->36->16->9 cores by fusing off edge cores. Interior router defect forces die discard. No virtual channels."
+}
+
+@article{xu2022wafermap,
+  author = "Qiao Xu and Naigong Yu and Firdaous Essaf",
+  title = "Improved Wafer Map Inspection Using Attention Mechanism and Cosine Normalization",
+  journal = "Machines",
+  volume = "10",
+  number = "2",
+  pages = "146",
+  year = "2022",
+  publisher = "MDPI",
+  doi = "10.3390/machines10020146",
+  note = "Classifies wafer defect patterns (None/Edge-Ring/Edge-Local/Center/Local/Scratch/Random/Donut/Near-Full) from WM-811K dataset; None pattern = random defects, others = systematic process-correlated patterns"
+}
+
+@phdthesis{chao2009waferdefect,
+  author = "Li-Chang Chao",
+  title = "Constructing a Wafer Defect Diagnostic System by Integrating Yield Prediction and Defect Pattern Recognition",
+  school = "National Chiao Tung University",
+  year = "2009",
+  address = "Hsinchu, Taiwan",
+  note = "Yield models for clustered defects; GRNN + multi-class SVM for defect pattern classification; demonstrates Poisson model underestimates yield when defects cluster"
+}
+
+@online{semiengineering2024systematic,
+  author = "Mark LaPedus",
+  title = "Systematic Yield Issues Now Top Priority At Advanced Nodes",
+  year = "2024",
+  url = "https://semiengineering.com/systematic-yield-issues-now-top-priority-at-advanced-nodes/",
+  note = "At sub-7nm nodes, systematic defects (lithographic marginalities, CMP, etch loading) supplant random defects as dominant yield concern; edge-band patterns can cause >5\\% die loss"
+}
+
+%% ============================================================
 %% LaTeX
 %% ============================================================
 
@@ -352,4 +446,177 @@
   publisher = "Addison-Wesley",
   edition = "2nd",
   address = "Reading, Massachusetts"
+}
+
+%% ============================================================
+%% Distributed / Disaggregated AI Inference
+%% ============================================================
+
+@article{shoeybi2019megatron,
+  title = {Megatron-{LM}: Training Multi-Billion Parameter Language Models Using Model Parallelism},
+  author = {Shoeybi, Mohammad and Patwary, Mostofa and Puri, Raul and LeGresley, Patrick and Casper, Jared and Catanzaro, Bryan},
+  journal = {arXiv preprint arXiv:1909.08053},
+  year = {2019}
+}
+
+@inproceedings{narayanan2021efficient,
+  title = {Efficient Large-Scale Language Model Training on {GPU} Clusters Using {Megatron-LM}},
+  author = {Narayanan, Deepak and Shoeybi, Mohammad and Casper, Jared and LeGresley, Patrick and Patwary, Mostofa and Korthikanti, Vijay and Vainbrand, Dmitri and Grber, Prethvi and Zaharia, Matei and Catanzaro, Bryan},
+  booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC)},
+  year = {2021}
+}
+
+@inproceedings{lepikhin2021gshard,
+  title = {{GShard}: Scaling Giant Models with Conditional Computation and Automatic Sharding},
+  author = {Lepikhin, Dmitry and Lee, HyoukJoong and Xu, Yuanzhong and Chen, Dehao and Firat, Orhan and Huang, Yanping and Krikun, Maxim and Shazeer, Noam and Chen, Zhifeng},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year = {2021}
+}
+
+@inproceedings{zhong2024distserve,
+  title = {{DistServe}: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving},
+  author = {Zhong, Yinmin and Liu, Shengyu and Chen, Junda and Hu, Jianbo and Zhu, Yibo and Liu, Xuanzhe and Jin, Xin and Zhang, Hao},
+  booktitle = {18th USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
+  year = {2024}
+}
+
+@inproceedings{patel2024splitwise,
+  title = {{Splitwise}: Efficient Generative {LLM} Inference Using Phase Splitting},
+  author = {Patel, Pratyush and Choukse, Esha and Zhang, Chaojie and Shah, Aashaka and Goiri, {\'I}{\~n}igo and Maleki, Saeed and Bianchini, Ricardo},
+  booktitle = {51st Annual International Symposium on Computer Architecture (ISCA)},
+  year = {2024}
+}
+
+@inproceedings{he2025waferllm,
+  title = {{WaferLLM}: Large Language Model Inference at Wafer Scale},
+  author = {He, Congjie and Huang, Yeqi and Mu, Pei and Miao, Ziming and Xue, Jilong and Ma, Lingxiao and Yang, Fan and Mai, Luo},
+  booktitle = {Proceedings of the 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
+  year = {2025}
+}
+
+%% ============================================================
+%% Why Larger Chips / Wafer-Scale Integration
+%% ============================================================
+
+@article{dally2020domain,
+  title = {Domain-Specific Hardware Accelerators},
+  author = {Dally, William J. and Turakhia, Yatish and Han, Song},
+  journal = {Communications of the ACM},
+  volume = {63},
+  number = {7},
+  pages = {48--57},
+  year = {2020},
+  doi = {10.1145/3361682}
+}
+
+@inproceedings{arunkumar2017mcm,
+  title = {{MCM-GPU}: Multi-Chip-Module {GPUs} for Continued Performance Scalability},
+  author = {Arunkumar, Akhil and Bolotin, Evgeny and Cho, Benjamin and Milic, Ugljesa and Ebrahimi, Eiman and Villa, Oreste and Jaleel, Aamer and Wu, Carole-Jean and Nellans, David},
+  booktitle = {Proceedings of the 44th Annual International Symposium on Computer Architecture (ISCA)},
+  pages = {320--332},
+  year = {2017}
+}
+
+@article{lie2023cerebras,
+  title = {Cerebras Architecture Deep Dive: First Look Inside the Hardware/Software Co-Design for Deep Learning},
+  author = {Lie, Sean},
+  journal = {IEEE Micro},
+  volume = {43},
+  number = {3},
+  pages = {18--30},
+  year = {2023}
+}
+
+@inproceedings{lie2019wafer,
+  title = {Wafer-Scale Deep Learning},
+  author = {Lie, Sean},
+  booktitle = {IEEE Hot Chips 31 Symposium (HCS)},
+  year = {2019}
+}
+
+%% ============================================================
+%% Collective Algorithm Representation / IR
+%% ============================================================
+
+@article{yoo2025standardized,
+  author  = {Yoo, Jinsun and Won, William and Cowan, Meghan and Jiang, Nan and Klenk, Benjamin and Sridharan, Srinivas and Krishna, Tushar},
+  title   = {Toward a Standardized Representation for Deep Learning Collective Algorithms},
+  journal = {IEEE Micro},
+  volume  = {45},
+  number  = {2},
+  pages   = {46--55},
+  year    = {2025},
+  doi     = {10.1109/MM.2025.3547363},
+  note    = {Proposes using Chakra ET to represent collective algorithms as primitive COMM\_SEND, COMM\_RECV, and COMP nodes, decoupling algorithm implementation from collective naming}
+}
+
+%% ============================================================
+%% Wafer-Scale Workload Analysis (beyond WaferLLM/Cerebras)
+%% ============================================================
+
+@inproceedings{rashidi2025fred,
+  author    = {Rashidi, Saeed and Won, William and Srinivasan, Sudarshan and Gupta, Puneet and Krishna, Tushar},
+  title     = {{FRED}: Flexible {REduction-Distribution} Interconnect and Communication Implementation for Wafer-Scale Distributed Training of {DNN} Models},
+  booktitle = {Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA)},
+  year      = {2025},
+  doi       = {10.1145/3695053.3731055},
+  note      = {Identifies six critical limitations of 2D mesh for wafer-scale training; proposes hierarchical switch-based fabric achieving 1.34--1.87$\times$ speedup over baseline mesh. arXiv:2406.19580}
+}
+
+@inproceedings{xu2025wscllm,
+  author    = {Xu, Zheng and Kong, Dehao and Li, Jinxi and Liu, Jiaxin and Hou, Jingxiang and Dai, Xu and Li, Chao and Wei, Shaojun and Hu, Yang and Yin, Shouyi},
+  title     = {{WSC-LLM}: Efficient {LLM} Service and Architecture Co-exploration for Wafer-scale Chips},
+  booktitle = {Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA)},
+  year      = {2025},
+  doi       = {10.1145/3695053.3731101},
+  note      = {Joint hardware-software co-exploration for LLM serving on wafer-scale 2D mesh; topology-aware scheduler for prefill/decode placement}
+}
+
+@inproceedings{song2025benchmarkwse,
+  author    = {Song, Shihui and Huang, Yafan and Jiang, Peng and Yu, Xiaodong and Zheng, Weijian and Di, Sheng and Cao, Qinglei and Feng, Yunhe and Xie, Zhen and Cappello, Franck},
+  title     = {Benchmarking the {Cerebras} {Wafer Scale Engine-2} Architecture},
+  booktitle = {Proceedings of the SC '25 Workshops of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+  year      = {2025},
+  publisher = {ACM},
+  doi       = {10.1145/3731599.3767438},
+  note      = {Independent WSE-2 benchmarking: 1.06 PFLOPS single-precision, 8.80 PB/s memory BW; roofline shows B/F ratio $\sim$10$\times$ higher than CPU/GPU; even SpMV becomes compute-bound on WSE-2}
+}
+
+@inproceedings{wei2025spatialattention,
+  author    = {Wei, Taiquan and Wang, Huizheng and Wang, Zichuan and Yin, Shouyi and Hu, Yang},
+  title     = {Spatial-Aware Orchestration of {LLM} Attention on Waferscale Chips},
+  booktitle = {Advanced Parallel Processing Technologies (APPT 2025)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {16062},
+  pages     = {386--391},
+  year      = {2025},
+  publisher = {Springer},
+  doi       = {10.1007/978-981-95-1021-4\_29},
+  note      = {Shows 2D mesh topology undermines GPU-optimized ring-attention; ring logical neighbors may be physically distant on mesh; causal masks create position-dependent imbalance; 1.5$\times$ improvement via spatial-aware cost model}
+}
+
+@inproceedings{brown2023stencilwse,
+  author    = {Brown, Nick and Echols, Brandon and Zarins, Justs and Grosser, Tobias},
+  title     = {Exploring the Suitability of the {Cerebras} Wafer Scale Engine for Stencil-Based Computation Codes},
+  booktitle = {Euro-Par 2022: Parallel Processing Workshops},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {13835},
+  pages     = {51--65},
+  year      = {2023},
+  publisher = {Springer},
+  doi       = {10.1007/978-3-031-31209-0\_4},
+  note      = {Independent WSE-1 evaluation via TensorFlow (no direct PE mapping control); CS-1 achieves 2.5$\times$ over 4$\times$ V100 GPUs for Jacobi stencil. EPCC, University of Edinburgh}
+}
+
+@inproceedings{yang2025segmentation,
+  author    = {Yang, Qize and Liu, Jiaxin and Wei, Taiquan and Jin, Yuxin and Yin, Shouyi and Hu, Yang},
+  title     = {Segmentation-Aware Optimization of Collective for Waferscale Chips},
+  booktitle = {Advanced Parallel Processing Technologies (APPT 2025)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {15558},
+  pages     = {34--46},
+  year      = {2025},
+  publisher = {Springer},
+  doi       = {10.1007/978-981-95-1021-4\_3},
+  note      = {Extends Alpha-Beta cost model with die-to-die bandwidth segmentation awareness; D2D bandwidth varies with packet size, creating optimal segmentation granularity; reduces collective overhead by 73.43\%}
 }

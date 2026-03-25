@@ -39,7 +39,7 @@
 
 \begin{document}
 
-\title{Paper Title Here}
+\title{Defect-Tolerant Wafer-Scale NoC Remapping for Disaggregated AI Inference}
 
 %%
 %% Abstract
@@ -49,48 +49,279 @@
 
 \begin{abstract}
 
-  Abstract text here.
+Wafer-scale 2D mesh architectures deliver unprecedented on-chip parallelism for AI inference, but manufacturing defects are inevitable at this scale and fragment the physical substrate into unusable irregular regions. Existing approaches either discard defective regions --- wasting over 99\% of healthy silicon --- or rely on proprietary hardware remapping that restores regularity without optimizing for workload characteristics.
+We present a \emph{model-defined remapper} that addresses defect tolerance at three levels:
+(1)~it maps a virtual regular mesh onto all healthy nodes of a defective physical substrate, recovering utilization that discard-based approaches abandon;
+(2)~it optimizes the mapping for workload-specific communication patterns, separately tuning for compute-bound prefill (GEMM) and memory-bound decode (GEMV) phases of disaggregated LLM inference;
+(3)~it exploits underutilized routing resources (diagonal links, spare cores, extra virtual channels) to compensate for remapping overhead.
+Crucially, the remapper guarantees deadlock-free routing on the resulting irregular topology via a submesh-hierarchy scheme requiring only two virtual channels.
+Evaluation across mesh scales from $64 \times 64$ to $512 \times 512$ at 1--15\% defect rates demonstrates [X\%] utilization improvement over discard-based approaches while maintaining [Y\%] of healthy-mesh performance.
 
 \end{abstract}
 
 \maketitle
 
+%% ================================================================
+%% SECTION 1: INTRODUCTION
+%% ================================================================
 \section{Introduction}
+\label{sec:intro}
+
+Wafer-scale 2D mesh architectures have emerged as the dominant substrate for large-scale AI workloads. The Cerebras Wafer Scale Engine (WSE) integrates approximately 900K cores with 40\,GB of distributed SRAM on a single 46,225\,mm$^2$ wafer, delivering 220\,Pb/s on-wafer fabric bandwidth~\cite{lie2023cerebras}. By eliminating off-chip communication bottlenecks, these architectures support the structured communication patterns --- systolic data flow, broadcast, and reduce --- that AI inference demands. As model sizes grow, so does the pressure to use every available core efficiently.
+
+However, LLM inference is not a monolithic workload. It decomposes into two phases with fundamentally different characteristics: \emph{prefill} processes the full input prompt via GEMM (compute-bound, high arithmetic intensity), while \emph{decode} generates tokens autoregressively via GEMV (memory-bandwidth-bound, low arithmetic intensity). Crucially, optimal performance requires \emph{right-sized} mesh partitions for each phase --- WaferLLM~\cite{he2025waferllm} demonstrates that decode throughput can actually \emph{decrease} when scaling to more cores, because communication overhead outweighs the computational benefit. The disaggregated inference paradigm~\cite{zhong2024distserve, patel2024splitwise} formalizes this by separating prefill and decode onto differently-sized hardware partitions.
+
+Manufacturing defects are inevitable at wafer scale. Under the industry-standard negative binomial yield model~\cite{stapper1983}, the probability of a defect-free wafer is essentially zero. Even at a modest 1\% defect rate, the largest contiguous defect-free mesh on a $750 \times 750$ wafer covers only ${\sim}36 \times 36$ nodes --- \textbf{0.23\% utilization}. Defects fragment the physical substrate, and the right-sized mesh for a given workload may simply not exist as a contiguous region.
+
+Industry addresses defects through yield binning (NVIDIA, AMD)~\cite{nvidia2020ga102, gamersnexus2013binning}, edge discard (Tilera)~\cite{tilera2013tilegx}, and spare-core remapping (Cerebras, Tesla Dojo)~\cite{cerebras2025sigops, talpes2023dojo}. Cerebras's approach is the most sophisticated: a proprietary algorithm routes around defects to expose a regular 2D mesh to software~\cite{luczynski2024reduce}. However, the algorithm is undisclosed and cannot be reproduced or extended. Moreover, it only restores regularity --- it does not optimize for workload-specific communication patterns, and it conceals redundant resources (spare cores, diagonal links) that could improve performance.
+
+We propose a \emph{model-defined remapper} that addresses the problem at three levels:
+
+\begin{enumerate}
+\item \textbf{Remap over defective mesh to expose regular virtual topology with deadlock-free routing.}
+The remapper maps a virtual regular mesh onto all healthy nodes of a defective physical substrate --- recovering usable area that discard-based approaches abandon. The resulting irregular physical paths are guaranteed deadlock-free via a submesh-hierarchy routing scheme requiring only ${\geq}2$ virtual channels.
+
+\item \textbf{Optimize remapping for workload communication patterns.}
+Rather than a topology-only mapping, the remapper incorporates workload-specific cost functions --- minimizing hop stretch along systolic data-flow edges for GEMM (prefill) and broadcast/reduce tree depth for GEMV (decode). This enables right-sized, communication-efficient virtual partitions for each inference phase.
+
+\item \textbf{Exploit redundant resources to further mitigate remapping overhead.}
+Current approaches hide spare cores, diagonal links, and additional virtual channels behind a regular facade. Our remapper instead exposes and utilizes these resources --- diagonal links as routing shortcuts, spare cores as additional compute, and extra channels for routing flexibility --- turning redundancy overhead into a performance advantage.
+\end{enumerate}
+
+\noindent\textbf{Contributions:}
+\begin{itemize}
+\item A hierarchical virtual-to-physical topology remapping framework that scales to $512 \times 512$ meshes, with provably deadlock-free routing on arbitrary post-remapping topologies via submesh-hierarchy routing (ascend-then-descend, requiring only ${\geq}2$ virtual channels).
+
+\item A workload-aware cost model that optimizes remapping for disaggregated AI inference --- separately tuned for prefill (GEMM) and decode (GEMV) communication patterns.
+
+\item Exploitation of underutilized routing resources (diagonal links, spare cores, extra channels) through cross-topology remapping, turning redundancy overhead into a performance advantage.
+
+\item Comprehensive evaluation across scales ($64 \times 64$ to $512 \times 512$), fault rates (1\%--15\%), and workloads (GEMM, GEMV), demonstrating [X\%] utilization improvement over discard-based approaches with [Y\%] of healthy-mesh performance.
+\end{itemize}
 
 
+%% ================================================================
+%% SECTION 2: BACKGROUND & MOTIVATION
+%% ================================================================
+\section{Background \& Motivation}
+\label{sec:background}
 
-\section{Background}
+\subsection{From Larger Chips to Defect Tolerance}
+\label{sec:bg-defects}
+
+Integrating more transistors on a single die increases on-chip compute density, memory bandwidth, and cache capacity --- but the most critical benefit is eliminating off-chip communication. Data movement across chip boundaries costs 10--100$\times$ the energy and latency of on-chip transfers~\cite{dally2020domain}, and multi-chip designs face bandwidth cliffs at every packaging level (die $\to$ package $\to$ board $\to$ rack)~\cite{arunkumar2017mcm}. This motivates wafer-scale integration: the Cerebras WSE places ${\sim}$900K cores with 40\,GB of distributed SRAM on a single wafer, delivering 220\,Pb/s on-wafer fabric bandwidth --- orders of magnitude beyond what multi-chip packages achieve~\cite{lie2023cerebras}.
+
+\textbf{Defects are inevitable.}
+Manufacturing defects --- both random contamination and systematic process variations --- occur at a stable density per unit area. Under the negative binomial yield model~\cite{stapper1983}, yield drops as $Y_R = (1 + D_0 A / \alpha)^{-\alpha}$. At wafer scale ($A = 46{,}225$\,mm$^2$), the probability of a defect-free chip is essentially zero. Beyond manufacturing, aging mechanisms such as hot carrier injection, electromigration, and time-dependent dielectric breakdown introduce additional defects over a device's operational lifetime. Defect tolerance is not optional at this scale; it is a design requirement.
+
+\textbf{Industry approaches to defect tolerance.}
+Conventional chips handle defects in three ways:
+(1)~\emph{Yield binning} --- over-provision compute units and fuse off defective ones, selling chips with more defects as lower-tier SKUs (e.g., NVIDIA GA102~\cite{nvidia2020ga102}, AMD Zen~3~\cite{gamersnexus2013binning});
+(2)~\emph{Edge discard} --- disable peripheral cores in a mesh and discard the entire die on interior defects (e.g., Tilera TILE-Gx~\cite{tilera2013tilegx});
+(3)~\emph{Spare-core remapping} --- provision a small percentage of spare cores and remap around defects at manufacturing time (e.g., Tesla Dojo D1 with 1.7\% spares~\cite{talpes2023dojo}).
+These approaches work because the affected chips are either small enough that defect-free regions are common, or the interconnect topology (crossbar, bus) allows disabling a unit without affecting routing for the rest.
+
+\textbf{None of these approaches scale to wafer-scale 2D mesh.}
+Wafer-scale architectures use hundreds of thousands of small cores connected via a 2D mesh~\cite{lie2023cerebras}. The 2D mesh scales with $O(N)$ links and constant router radix, and maps directly to the planar silicon substrate (nearest-neighbor wiring only)~\cite{lie2019wafer}. This manufacturing friendliness is fundamental: alternative topologies such as Clos-based switch fabrics can improve communication flexibility~\cite{rashidi2025fred}, but they require non-local, non-planar wiring and additional switch area --- at odds with the lithographic constraints of wafer-scale integration.
+However, in a 2D mesh every core also serves as a \emph{router} for its neighbors. An interior defect creates a routing hole --- messages cannot traverse through it, breaking dimension-order routing for all traffic that would cross that point. Yield binning and edge discard cannot handle such interior faults; they would waste nearly all healthy silicon. Even a few defects can drastically limit the maximum contiguous defect-free region: at 1\% defect rate on a $750 \times 750$ mesh, the largest guaranteed defect-free square is only ${\sim}36 \times 36$ nodes --- \textbf{0.23\% utilization}.
+
+\textbf{Cerebras's solution: redundant links + hardware remap.}
+The Cerebras WSE provisions spare cores (${\sim}$7\% redundancy) and redundant fabric links. A proprietary algorithm routes around defects to expose a regular 2D mesh to software~\cite{cerebras2025sigops, luczynski2024reduce}. This achieves high utilization ($>$93\% of cores active), but the algorithm is undisclosed and cannot be reproduced. Furthermore, it only restores regularity --- it does not optimize for specific workloads or exploit underutilized routing resources (e.g., diagonal links present in the physical fabric).
+
+%% --- 2.2 ---
+\subsection{AI Inference on Wafer-Scale Mesh}
+\label{sec:bg-inference}
+
+\textbf{Prefill vs.\ Decode phases.}
+LLM inference consists of two distinct phases with fundamentally different computational profiles:
+
+\begin{itemize}
+\item \textbf{Prefill phase:} Processes the entire input prompt in parallel. The dominant operation is GEMM (matrix--matrix multiplication) --- projecting all input tokens through the model's weight matrices simultaneously. This phase is \emph{compute-bound} with high arithmetic intensity.
+
+\item \textbf{Decode phase:} Generates output tokens one at a time, autoregressively. Each step performs a GEMV (matrix--vector multiplication) against the KV-cache. This phase is \emph{memory-bandwidth-bound} with low arithmetic intensity.
+\end{itemize}
+
+Because prefill and decode have opposite resource requirements, running them on the same hardware wastes resources. \emph{Disaggregated inference}~\cite{zhong2024distserve, patel2024splitwise} separates these phases onto different hardware partitions, each sized and optimized for its workload.
+
+\textbf{Running inference on wafer-scale 2D mesh.}
+WaferLLM~\cite{he2025waferllm} 2D-tiles each layer's weight matrix across a regular mesh (both matrix dimensions mapped to the two mesh axes), with all cores collaborating on one layer via cyclic-shift GEMM (nearest-neighbor systolic data flow) or broadcast-reduce GEMV. WSC-LLM~\cite{xu2025wscllm} further explores joint hardware--software co-optimization for LLM serving on wafer-scale 2D mesh with topology-aware scheduling.
+Independent benchmarking confirms the unique characteristics of wafer-scale architectures: Song et al.~\cite{song2025benchmarkwse} measure 1.06\,PFLOPS single-precision and 8.80\,PB/s memory bandwidth on the WSE-2, with a bytes-per-flop ratio ${\sim}10\times$ higher than CPUs or GPUs.
+
+\textbf{Topology-aware algorithm design is critical.}
+Recent work demonstrates that algorithms designed for GPU interconnects do not translate directly to 2D mesh. Wei et al.~\cite{wei2025spatialattention} show that ring-attention, effective on GPUs, suffers on wafer-scale mesh because logical ring neighbors may be physically distant, and causal masks create position-dependent load imbalance --- achieving $1.5\times$ improvement through spatial-aware orchestration. Similarly, Yang et al.~\cite{yang2025segmentation} find that collective communication cost models must account for die-to-die bandwidth segmentation on wafer-scale chips, reducing collective overhead by 73\% through segmentation-aware optimization.
+
+\textbf{More cores $\neq$ better performance.}
+The two inference phases scale very differently with mesh size~\cite{he2025waferllm}. GEMV (decode) can \emph{degrade} with too many cores: per-core computation is already small, and as the mesh grows the allreduce tree deepens until communication dominates ${>}90\%$ of total latency. GEMM (prefill) benefits from more cores but with diminishing returns.
+WaferLLM confirms this asymmetry: for LLaMA3-8B, it uses $660 \times 660$ cores for prefill but only $360 \times 360$ for decode --- nearly $3.4\times$ fewer cores for the memory-bound phase. This means optimal mesh size is workload-dependent, and remapping \emph{quality} matters, not just utilization --- a naive remapper that maximizes core count but ignores communication patterns may land on the wrong side of the scaling trade-off.
+
+%% --- 2.3 ---
+\subsection{Opportunity: Workload-Aware Remapping}
+\label{sec:bg-opportunity}
+
+\S\ref{sec:bg-defects} establishes that defects are inevitable at wafer scale and fragment the physical substrate --- even a small defect rate leaves only a tiny fraction usable as contiguous regular mesh. \S\ref{sec:bg-inference} shows that AI inference workloads have phase-specific communication requirements and that performance is sensitive to mesh sizing and layout quality. Together, these observations motivate a remapping approach that operates at three levels:
+
+\begin{enumerate}
+\item \emph{Remaps over defective mesh} to expose a regular virtual topology with deadlock-free routing, recovering the ${>}99\%$ of cores that discard-based approaches abandon.
+\item \emph{Optimizes for workload communication patterns}, since prefill and decode have fundamentally different critical paths --- systolic nearest-neighbor shifts (GEMM) vs.\ broadcast/reduce trees (GEMV).
+\item \emph{Exploits redundant resources} --- diagonal links as routing shortcuts, spare cores as additional compute, and extra virtual channels for routing flexibility --- actively compensating for remapping overhead rather than concealing these resources behind a regular facade.
+\end{enumerate}
 
 
+%% ================================================================
+%% SECTION 3: CHALLENGES
+%% ================================================================
+\section{Challenges}
+\label{sec:challenges}
 
-\section{Motivation}
+% Ordered by dependency: correctness -> quality -> practicality.
+% Each maps to a design component in §4.
+
+\subsection{Deadlock-Free Routing on Irregular Topology}
+\label{sec:ch-deadlock}
+
+Remapping a virtual mesh onto a defective physical mesh fundamentally changes the routing structure. On a defect-free mesh, each virtual link is a single physical hop, and dimension-order (XY) routing is trivially deadlock-free. After remapping, a single virtual hop may map to a \textbf{multi-hop physical detour} around faulty nodes. A virtual communication spanning several virtual hops becomes the \emph{concatenation} of these multi-hop physical segments.
+
+This concatenation mechanism creates three correctness hazards:
+
+\begin{itemize}
+\item \textbf{Deadlock (cyclic channel dependency):} When multiple virtual communications are mapped to concatenated multi-hop physical paths, their segments may share physical channels in opposing directions. These intersections create cyclic dependencies in the channel dependency graph (CDG) --- messages block forever waiting for each other. The Dally-Seitz theorem~\cite{dally1987deadlock} establishes that deadlock freedom requires an acyclic CDG, but the concatenation of independently-routed segments provides no such guarantee.
+
+\item \textbf{Infinite duplication (path cycles):} The concatenated end-to-end physical path can visit the same physical node twice. At that node, the stateless routing table cannot distinguish first visit from second --- every arrival fans out to all encoded output ports, creating copies that cycle and duplicate exponentially.
+
+\item \textbf{Multicast amplification:} For multicast operations (e.g., GEMV broadcast/reduce), branch intersections at a router duplicate flits from converging branches, each of which may themselves contain concatenation-induced cycles --- compounding the problem.
+\end{itemize}
+
+Existing approaches either avoid the problem entirely (Cerebras: proprietary solution) or provide only partial guarantees (up*/down* routing limits path diversity)~\cite{ariadne2011, udirec2013}. A correct remapping framework must guarantee: (a)~acyclic CDG (deadlock freedom), (b)~cycle-free paths (no node visited twice), and (c)~valid physical paths for all virtual communications.
+
+\subsection{Workload-Aware Mapping Quality}
+\label{sec:ch-quality}
+
+Even with correct routing, the \emph{quality} of the virtual-to-physical mapping determines performance. The mapping problem is a constrained subgraph embedding --- finding an injective function $f: V_v \to V_p$ that minimizes a cost function over all virtual edges. This generalizes subgraph isomorphism and is NP-hard~\cite{rost2020hardness}.
+
+The challenge is not just computational hardness but \emph{what to optimize}:
+\begin{itemize}
+\item \textbf{Topology-only cost is insufficient.} Minimizing total hop count treats all virtual edges equally. But if two virtual nodes never communicate, their physical distance is irrelevant. Conversely, edges on the critical path of a systolic GEMM must be as short as possible.
+\item \textbf{Different workloads need different mappings.} GEMM (systolic) has strict nearest-neighbor row/column shifts where hop uniformity is critical for synchronization. GEMV (broadcast+reduce) has long-range collective operations where tree depth and fan-in balance matter more than individual hop counts.
+\end{itemize}
+
+A workload-aware cost function must weight mapping quality by actual communication volume and pattern, separately tunable for prefill (GEMM) and decode (GEMV).
+
+\subsection{Scalability to Wafer-Scale Meshes}
+\label{sec:ch-scalability}
+
+Given that the mapping problem is NP-hard (\S\ref{sec:ch-quality}), exact algorithms are infeasible at wafer scale:
+
+\begin{itemize}
+\item \textbf{Exact subgraph matching} (Ullmann 1976, VF2/VF3) has exponential worst-case complexity and is intractable for meshes with hundreds of thousands of nodes. Worse, as defects accumulate, an exact isomorphic match may not even exist.
+
+\item \textbf{Metaheuristics} --- simulated annealing~\cite{zhang2009topology} and memetic algorithms~\cite{qian2024memetic} --- improve over exact methods but remain too slow at wafer scale due to iterative global search. Zhang et al.\ report results only up to 128 nodes.
+
+\item \textbf{The search space is vast.} The Cerebras WSE-3 has 900K cores~\cite{lie2023cerebras}. Even after removing defective nodes, the number of candidate placements is astronomically large.
+\end{itemize}
+
+A practical framework must decompose the problem spatially, reducing per-node search from $O(M)$ (exhaustive) to $O(\log M)$ (KdTree-indexed), enabling near-linear scaling to wafer-scale meshes.
 
 
+%% ================================================================
+%% SECTION 4: DESIGN (OUTLINE)
+%% ================================================================
+\section{Design: Model-Defined Remapper}
+\label{sec:design}
 
-\section{Design}
+% [OUTLINE — to be expanded with full content]
 
+\subsection{Overview}
+\label{sec:design-overview}
+
+% End-to-end pipeline diagram (Figure).
+% Inputs: (1) AI model compute graph, (2) Remapper configuration,
+%         (3) Virtual NoC specification, (4) Hardware info, (5) Defect map.
+% Pipeline: Compile -> Init Anchor -> Iterative Frontier Expansion -> Output.
+% Output: Node mapping f: V -> P + static deterministic routing tables.
+
+The remapper takes five inputs: an AI model compute graph describing the workload's dataflow, a remapper configuration, a virtual NoC specification (the target regular mesh topology), hardware information (core capabilities, link bandwidth, memory per core), and a defect map identifying faulty nodes and links. It produces a node mapping $f: V \to P$ from virtual mesh nodes to healthy physical nodes, together with static, deterministic routing tables guaranteed deadlock-free.
+
+The remapping proceeds in four stages: (1)~\emph{Compile} the model graph into a hardware-aware communication graph (\S\ref{sec:design-compile}); (2)~\emph{Anchor} initialization (\S\ref{sec:design-anchor}); (3)~\emph{Iterative Frontier Expansion} with interleaved routing and cost evaluation (\S\ref{sec:design-frontier}), addressing the quality (\S\ref{sec:ch-quality}) and scalability (\S\ref{sec:ch-scalability}) challenges; (4)~\emph{Output} with deadlock-free routing verification (\S\ref{sec:design-routing}), addressing the correctness challenge (\S\ref{sec:ch-deadlock}).
+
+
+\subsection{Compute Graph Compilation}
+\label{sec:design-compile}
+
+% Translate hardware-agnostic model graph -> hardware-aware communication graph.
+% Decompose each layer into: systolic shifts (GEMM), broadcast/reduce (GEMV),
+% point-to-point (pipeline boundaries).
+% Annotate edges with traffic volume.
+% Decompose named ops into primitive send/receive/process tasks per core.
+% Analogy to Yoo et al. Chakra ET decomposition [yoo2025standardized].
+
+\emph{To be written.}
+Key content: decomposition of named high-level operations into primitive per-core transmission and computation tasks (send, receive, process), organized as per-core dependency graphs. This decouples the remapper from operator-level semantics --- analogous to how Yoo et al.~\cite{yoo2025standardized} decompose collective algorithms into primitive COMM\_SEND, COMM\_RECV, and COMP nodes in the Chakra Execution Trace format.
+
+
+\subsection{Anchor Initialization}
+\label{sec:design-anchor}
+
+% Select anchor physical node (spatial centrality in healthy region).
+% Map corresponding virtual node (e.g., center of virtual mesh) to anchor.
+% Initialize frontier: virtual nodes adjacent to mapped nodes,
+% paired with candidate physical nodes.
+
+\emph{To be written.}
+
+
+\subsection{Iterative Frontier Expansion}
+\label{sec:design-frontier}
+
+% Core mapping loop (Algorithm 1).
+% Expand frontier by matching unmapped virtual neighbors to physical neighbors.
+% Multiple candidate trials evaluated in parallel.
+% Interleaved routing: build paths for newly covered edges at each step.
+% Cost evaluation: node cost + routing cost per trial.
+% Select lowest-cost trial; advance frontier.
+%
+% Cost function (subsection):
+% - Node cost: coordinate displacement + neighbor consistency.
+% - Routing cost: hop stretch * traffic volume + link congestion.
+% - Separately tunable for prefill (GEMM) vs decode (GEMV).
+
+\emph{To be written.}
+Key content: frontier-based expansion ensuring spatial locality; interleaved routing evaluation during mapping (not after); multiple trials to avoid greedy local minima; workload-aware cost function weighting hop stretch by traffic volume.
+
+
+\subsection{Deadlock-Free Routing via Submesh Hierarchy}
+\label{sec:design-routing}
+
+% Submesh-hierarchy routing (Algorithm 2).
+% Partition mapped physical mesh into hierarchy of submeshes.
+% Ascend-then-descend constraint: route on ascending VC first, then descending.
+% No re-ascent -> total order on channel usage -> acyclic CDG -> deadlock freedom.
+% Broadcast storm prevention: deterministic, non-duplicating forwarding.
+% Hardware requirement: >= 2 VCs (Cerebras has 24 colors).
+
+\emph{To be written.}
+Key content: submesh-hierarchy partitioning; ascend-then-descend routing constraint imposing total order on channel usage; proof that this guarantees acyclic CDG; cycle-free path guarantee preventing infinite duplication; requirement of ${\geq}2$ virtual channels (conservative --- Cerebras WSE provides 24~\cite{cerebras2024sdk}).
 
 
 \section{Implementation}
 
-
+\emph{To be written.}
 
 \section{Evaluation}
 
-
+\emph{To be written.}
 
 \section{Related Work}
 
-
+\emph{To be written.}
 
 \section{Conclusion}
 
-
+\emph{To be written.}
 
 %%%%%%% -- PAPER CONTENT ENDS -- %%%%%%%%
 
 \bibliographystyle{ACM-Reference-Format}
-\bibliography{sample-base}
+\bibliography{references}
 
 %% ASPLOS allows unlimited appendices (not counted toward 11-page limit)
 %\appendix
